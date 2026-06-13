@@ -396,6 +396,10 @@ func (r *AIChatPlugin) reloadMCPServers(ctx context.Context) {
 	discoveryTools := GetDiscoveryTools()
 	mcpTools = append(mcpTools, discoveryTools...)
 
+	// Load system plugin tools (wraps all system plugins as MCP tools)
+	systemTools := GetSystemTools()
+	mcpTools = append(mcpTools, systemTools...)
+
 	r.mcpToolsMap = mcpTools
 
 	plugin.GetPluginManager().GetUI().ReloadChatResources(ctx, "tools")

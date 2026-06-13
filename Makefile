@@ -229,7 +229,8 @@ _bundle_mac_app:
 	@if [ -n "$(MACOS_SIGN_IDENTITY)" ]; then \
 		codesign --options=runtime --force --deep --sign "$(MACOS_SIGN_IDENTITY)" Wox.app/Contents/MacOS/wox; \
 	else \
-		echo "MACOS_SIGN_IDENTITY is empty; skip codesign"; \
+		echo "MACOS_SIGN_IDENTITY is empty; ad-hoc self-signing"; \
+		codesign --force --deep --sign - Wox.app; \
 	fi
 	@if [ -n "$(MACOS_SIGN_IDENTITY)" ]; then \
 		create-dmg \
