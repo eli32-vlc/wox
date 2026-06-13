@@ -4306,17 +4306,19 @@ class WoxLauncherController extends GetxController {
   void executeDefaultAction(String traceId) {
     Logger.instance.info(traceId, "execute default action");
 
-    // Route text to AI chat. Plugin results are not auto-selected on Enter.
+    // Route text to AI chat. Plugin results are suppressed in AI mode.
     var text = queryBoxTextFieldController.text.trim();
     if (text.isNotEmpty) {
       var aiChatController = Get.find<WoxAIChatController>();
       if (aiChatController.aiChatData.value.id.isEmpty) {
         aiChatController.startNewChat();
       }
-      if (!isShowPreviewPanel.value || currentPreview.value.previewType != WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
-        aiChatController.openChatPreview();
-      }
+      // Add user message first, then open preview so the snapshot includes it
       aiChatController.sendMessage();
+      // Clear any stale plugin results and show AI chat full-width
+      resultListViewController.clearItems();
+      resultPreviewRatio.value = 0;
+      aiChatController.openChatPreview();
       return;
     }
 

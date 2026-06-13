@@ -37,11 +37,12 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
     return Obx(() {
       final title = controller.aiChatData.value.title.isEmpty ? tr('ui_ai_chat_new_chat') : controller.aiChatData.value.title;
       final isFullscreen = controller.launcherController.isPreviewFullscreen.value;
+      final toolCount = controller.availableTools.length;
 
       return WoxPreviewTopStatusBar(
         woxTheme: woxTheme,
         title: Text(
-          title,
+          toolCount > 0 ? "$title · $toolCount tools" : title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: fontColor, fontSize: _metrics.actionHeaderFontSize, fontWeight: FontWeight.w600, height: 1.1),
