@@ -48,16 +48,12 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
         ),
         actions: [
           // Stop button - visible during AI generation
-          Obx(() {
-            if (controller.isGenerating.value) {
-              return WoxPreviewTopStatusBarAction(
-                tooltip: tr('ui_ai_chat_stop'),
-                onPressed: () => controller.stopChatGeneration(),
-                icon: const Icon(Icons.stop_rounded, color: Colors.red),
-              );
-            }
-            return const SizedBox.shrink();
-          }),
+          if (controller.isGenerating.value)
+            WoxPreviewTopStatusBarAction(
+              tooltip: tr('ui_ai_chat_stop'),
+              onPressed: () => controller.stopChatGeneration(),
+              icon: const Icon(Icons.stop_rounded, color: Colors.red),
+            ),
           WoxPreviewTopStatusBarAction(
             tooltip: tr('ui_ai_chat_new_chat'),
             onPressed: () {
