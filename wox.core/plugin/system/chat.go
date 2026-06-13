@@ -33,6 +33,8 @@ type AIChatPlugin struct {
 	mcpServers      []common.AIChatMCPServerConfig
 	mcpToolsMap     []common.MCPTool
 	api             plugin.API
+
+	chatCancelFuncs *util.HashMap[string, context.CancelFunc] // chat id -> cancel func, used to stop ongoing chats
 }
 
 func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
@@ -56,6 +58,15 @@ func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
 					DefaultValue: "true",
 					Label:        "i18n:plugin_ai_chat_enable_fallback_search",
 					Tooltip:      "i18n:plugin_ai_chat_enable_fallback_search_tooltip",
+				},
+			},
+			{
+				Type: definition.PluginSettingDefinitionTypeCheckBox,
+				Value: &definition.PluginSettingValueCheckBox{
+					Key:          "ai_only_mode",
+					DefaultValue: "false",
+					Label:        "i18n:plugin_ai_chat_ai_only_mode",
+					Tooltip:      "i18n:plugin_ai_chat_ai_only_mode_tooltip",
 				},
 			},
 			{
@@ -231,6 +242,7 @@ func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
 
 func (r *AIChatPlugin) Init(ctx context.Context, initParams plugin.InitParams) {
 	r.resultChatIdMap = util.NewHashMap[string, string]()
+	r.chatCancelFuncs = util.NewHashMap[string, context.CancelFunc]()
 	r.api = initParams.API
 	r.mcpServers = []common.AIChatMCPServerConfig{}
 
@@ -250,7 +262,14 @@ func (r *AIChatPlugin) Init(ctx context.Context, initParams plugin.InitParams) {
 		r.agents = agents
 	}
 
+	// Set AI-only mode from saved setting
+	plugin.SetAIOnlyMode(r.api.GetSetting(ctx, "ai_only_mode") == "true")
+
 	r.api.OnSettingChanged(ctx, func(callbackCtx context.Context, key string, value string) {
+		if key == "ai_only_mode" {
+			plugin.SetAIOnlyMode(value == "true")
+		}
+
 		if key == "agents" {
 			agents, err := r.loadAgents(callbackCtx)
 			if err != nil {
@@ -272,12 +291,21 @@ func (r *AIChatPlugin) Init(ctx context.Context, initParams plugin.InitParams) {
 	util.Go(ctx, "reload MCP servers", func() {
 		time.Sleep(time.Millisecond * 1000) // Wait for websocket server to be ready
 		r.reloadMCPServers(util.NewTraceContext())
+
+		// Run discovery startup scan after tools are loaded
+		time.Sleep(time.Millisecond * 2000) // Let MCP tools fully register
+		RunDiscoveryStartupScan(util.NewTraceContext())
 	})
 }
 
 func (r *AIChatPlugin) IsAutoFocusToChatInputWhenOpenWithQueryHotkey(ctx context.Context) bool {
 	enableAutoFocusToChatInput := r.api.GetSetting(ctx, "enable_auto_focus_to_chat_input")
 	return enableAutoFocusToChatInput == "true"
+}
+
+func (r *AIChatPlugin) RefreshDiscoveryCache(ctx context.Context) {
+	discoveryCache.Clear()
+	RunDiscoveryStartupScan(ctx)
 }
 
 func (r *AIChatPlugin) QueryFallback(ctx context.Context, query plugin.Query) []plugin.QueryResult {
@@ -505,7 +533,19 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 			defaultPrompt := common.Conversation{
 				Id:        uuid.NewString(),
 				Role:      common.ConversationRoleSystem,
-				Text:      "You are a macOS AI assistant with access to system tools. You can check system status, manage files, control media, search the web, and run commands. Use the available tools to gather real-time information when answering questions about the user's system. Be concise and accurate.",
+				Text:      `You are a macOS AI assistant with access to 90+ system tools organized into three categories:
+
+1. macOS system tools (~52 tools): disk/memory/CPU/battery/network/display/audio/bluetooth/firewall/locale/keyboard/timezone info, file search, trash management, dark mode, screensaver, and more.
+2. System plugin tools (~37 tools): launch/kill/list apps, read/write clipboard, calculate, shell commands, emoji search, screenshot, browse directories, open URLs, manage windows, media playback, and more.
+3. User-configured MCP servers.
+
+CRITICAL RULES:
+- ALWAYS use tools to gather real data — never guess or fabricate system information. Every system query must start with a tool call.
+- When the user asks about their system status, files, apps, or settings, call the relevant tool first, then respond with the actual results.
+- You can check: disk usage, memory, CPU, battery, Wi-Fi SSID/signal, IP address, display resolution, brightness, audio volume/output devices/mute, running processes, installed apps via Spotlight, clipboard content, frontmost app, network connections, and much more.
+- Be concise and accurate. Report raw tool output in a readable format.
+- If a tool call fails, explain why and try an alternative approach or tool.
+- For unknown queries, explain what you can do with your available tools.`,
 				Timestamp: util.GetSystemTimestamp(),
 			}
 			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)
@@ -524,8 +564,12 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 		tools = r.mcpToolsMap
 	}
 
+	// Store cancel func so the chat can be stopped via /ai/chat/stop
+	chatCtx, chatCancel := context.WithCancel(ctx)
+	r.chatCancelFuncs.Store(aiChatData.Id, chatCancel)
+
 	var responseId = uuid.NewString()
-	chatErr := r.api.AIChatStream(ctx, aiChatData.Model, aiChatData.Conversations, common.ChatOptions{
+	chatErr := r.api.AIChatStream(chatCtx, aiChatData.Model, aiChatData.Conversations, common.ChatOptions{
 		Tools: tools,
 	}, func(streamResult common.ChatStreamData) {
 		r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: chat stream receiving data, status: %s, data: %s", streamResult.Status, streamResult.Data))
@@ -558,6 +602,9 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 			r.appendOrUpdateChatData(aiChatData)
 			r.saveChats(ctx)
 
+			// Clean up the cancel func when chat finishes
+			r.chatCancelFuncs.Delete(aiChatData.Id)
+
 			// only summarize the chat title if there is no tool call
 			// if there is any toolcall, we need to wait for the tool call to finish
 			if len(streamResult.ToolCalls) == 0 {
@@ -571,6 +618,9 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 			}
 		}
 	})
+
+	// Clean up cancel func when stream finishes (success or error)
+	r.chatCancelFuncs.Delete(aiChatData.Id)
 
 	if chatErr != nil {
 		r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to chat: %s", chatErr.Error()))
@@ -670,8 +720,61 @@ func (r *AIChatPlugin) getNewChatPreviewData(ctx context.Context) plugin.QueryRe
 }
 
 func (r *AIChatPlugin) Query(ctx context.Context, query plugin.Query) plugin.QueryResponse {
-	// AI chat is triggered directly via the HTTP API. No query results needed.
-	return plugin.NewQueryResponse(nil)
+	// If query has search text, return empty (all results shown when query is empty)
+	if query.Search != "" {
+		return plugin.NewQueryResponse(nil)
+	}
+
+	// Return saved chat sessions as search results
+	var results []plugin.QueryResult
+
+	// Add "New Chat" entry always
+	results = append(results, r.getNewChatPreviewData(ctx))
+
+	// Add existing chat sessions
+	for _, chat := range r.chats {
+		chatData := chat
+		if chatData.Title == "" {
+			chatData.Title = "i18n:ui_ai_chat_new_chat"
+		}
+
+		previewData, err := json.Marshal(chatData)
+		if err != nil {
+			r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to marshal chat preview data: %s", err.Error()))
+			continue
+		}
+
+		resultId := uuid.NewString()
+		r.resultChatIdMap.Store(chatData.Id, resultId)
+
+		groupName, groupScore := r.getResultGroup(ctx, chatData)
+
+		results = append(results, plugin.QueryResult{
+			Id:       resultId,
+			Title:    chatData.Title,
+			SubTitle: fmt.Sprintf("%d conversations", len(chatData.Conversations)),
+			Icon:     aiChatIcon,
+			Preview: plugin.WoxPreview{
+				PreviewType:    plugin.WoxPreviewTypeChat,
+				PreviewData:    string(previewData),
+				ScrollPosition: plugin.WoxPreviewScrollPositionBottom,
+			},
+			Actions: []plugin.QueryResultAction{
+				{
+					Name:                   "i18n:ui_ai_chat_start_chat",
+					PreventHideAfterAction: true,
+					ContextData:            common.ContextData{"chatId": chatData.Id},
+					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
+						plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
+					},
+				},
+			},
+			Group:      groupName,
+			GroupScore: groupScore,
+		})
+	}
+
+	return plugin.NewQueryResponse(results)
 }
 
 func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData) {
@@ -721,6 +824,17 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 			}
 		}
 	})
+}
+
+func (r *AIChatPlugin) StopChat(ctx context.Context, chatId string) bool {
+	if cancelFunc, ok := r.chatCancelFuncs.Load(chatId); ok {
+		r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Stopping chat: %s", chatId))
+		cancelFunc()
+		r.chatCancelFuncs.Delete(chatId)
+		return true
+	}
+	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: No active chat found to stop: %s", chatId))
+	return false
 }
 
 func (c *AIChatPlugin) getResultGroup(ctx context.Context, chat common.AIChatData) (string, int64) {

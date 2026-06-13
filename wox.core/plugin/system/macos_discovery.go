@@ -8,10 +8,66 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 	"wox/common"
 
 	"github.com/tmc/langchaingo/jsonschema"
 )
+
+var discoveryCache = &DiscoveryCache{data: make(map[string]string)}
+
+type DiscoveryCache struct {
+	mu       sync.RWMutex
+	data     map[string]string
+	lastScan int64
+}
+
+func (c *DiscoveryCache) Get(key string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.data[key]
+	return v, ok
+}
+
+func (c *DiscoveryCache) Set(key, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data[key] = value
+	c.lastScan = time.Now().Unix()
+}
+
+func (c *DiscoveryCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data = make(map[string]string)
+	c.lastScan = 0
+}
+
+func (c *DiscoveryCache) Age() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.lastScan == 0 {
+		return 0
+	}
+	return time.Duration(time.Now().Unix()-c.lastScan) * time.Second
+}
+
+func (c *DiscoveryCache) Count() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.data)
+}
+
+func RunDiscoveryStartupScan(ctx context.Context) {
+	tools := GetDiscoveryTools()
+	for _, tool := range tools {
+		result, err := tool.Callback(ctx, nil)
+		if err == nil && result.Text != "" {
+			discoveryCache.Set(tool.Name, result.Text)
+		}
+	}
+}
 
 type DiscoveredApp struct {
 	Name     string `json:"name"`
@@ -42,6 +98,7 @@ func GetDiscoveryTools() []common.MCPTool {
 		scanLaunchdServicesTool(),
 		scanUserLaunchAgentsTool(),
 		readPlistTool(),
+		discoveryRefreshTool(),
 	}
 }
 
@@ -57,6 +114,10 @@ func scanApplicationsTool() common.MCPTool {
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			if cached, ok := discoveryCache.Get("macos_discover_apps"); ok {
+				return common.Conversation{Role: common.ConversationRoleAssistant, Text: cached}, nil
+			}
+
 			searchFilter := ""
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
@@ -89,7 +150,6 @@ func scanApplicationsTool() common.MCPTool {
 						Path: appPath,
 					}
 
-					// Use mdls (Spotlight) to get bundle ID — handles binary plists
 					if out, err := runCmd("mdls", "-name", "kMDItemCFBundleIdentifier", "-raw", appPath); err == nil {
 						app.BundleId = strings.TrimSpace(out)
 					}
@@ -111,6 +171,7 @@ func scanApplicationsTool() common.MCPTool {
 				apps = []DiscoveredApp{}
 			}
 			result, _ := json.MarshalIndent(apps, "", "  ")
+			discoveryCache.Set("macos_discover_apps", string(result))
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
@@ -130,6 +191,10 @@ func scanHomebrewTool() common.MCPTool {
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			if cached, ok := discoveryCache.Get("macos_discover_homebrew"); ok {
+				return common.Conversation{Role: common.ConversationRoleAssistant, Text: cached}, nil
+			}
+
 			searchFilter := ""
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
@@ -260,6 +325,7 @@ func scanHomebrewTool() common.MCPTool {
 				pkgs = pkgs[:limit]
 			}
 			result, _ := json.MarshalIndent(pkgs, "", "  ")
+			discoveryCache.Set("macos_discover_homebrew", string(result))
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
@@ -278,6 +344,10 @@ func scanPlistFilesTool() common.MCPTool {
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			if cached, ok := discoveryCache.Get("macos_discover_plists"); ok {
+				return common.Conversation{Role: common.ConversationRoleAssistant, Text: cached}, nil
+			}
+
 			searchFilter := ""
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
@@ -334,6 +404,7 @@ func scanPlistFilesTool() common.MCPTool {
 				entries = []PlistEntry{}
 			}
 			result, _ := json.MarshalIndent(entries, "", "  ")
+			discoveryCache.Set("macos_discover_plists", string(result))
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
@@ -351,6 +422,10 @@ func scanLaunchdServicesTool() common.MCPTool {
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			if cached, ok := discoveryCache.Get("macos_discover_services"); ok {
+				return common.Conversation{Role: common.ConversationRoleAssistant, Text: cached}, nil
+			}
+
 			searchFilter := ""
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
@@ -361,6 +436,7 @@ func scanLaunchdServicesTool() common.MCPTool {
 				services = []DiscoveredService{}
 			}
 			result, _ := json.MarshalIndent(services, "", "  ")
+			discoveryCache.Set("macos_discover_services", string(result))
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
@@ -378,6 +454,10 @@ func scanUserLaunchAgentsTool() common.MCPTool {
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			if cached, ok := discoveryCache.Get("macos_discover_agents"); ok {
+				return common.Conversation{Role: common.ConversationRoleAssistant, Text: cached}, nil
+			}
+
 			searchFilter := ""
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
@@ -392,6 +472,7 @@ func scanUserLaunchAgentsTool() common.MCPTool {
 				combined = []DiscoveredService{}
 			}
 			result, _ := json.MarshalIndent(combined, "", "  ")
+			discoveryCache.Set("macos_discover_agents", string(result))
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
@@ -505,6 +586,20 @@ func extractJSONStringField(line string) string {
 	val = strings.TrimSuffix(val, ",")
 	val = strings.Trim(val, "\"")
 	return val
+}
+
+func discoveryRefreshTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_discovery_refresh",
+		Description: "Refresh all discovery caches. Re-scans applications, Homebrew packages, plists, and services.",
+		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			discoveryCache.Clear()
+			RunDiscoveryStartupScan(ctx)
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Discovery cache refreshed. %d tools cached.", discoveryCache.Count())}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
+	}
 }
 
 func init() {

@@ -212,6 +212,10 @@ class WoxApi {
     return await WoxHttpUtil.instance.postData(traceId, "/ai/mcp/tools/all", null);
   }
 
+  Future<void> refreshDiscoveryCache(String traceId) async {
+    await WoxHttpUtil.instance.postData(traceId, "/ai/discovery/refresh", null);
+  }
+
   Future<List<AIAgent>> findAIAgents(String traceId) async {
     return await WoxHttpUtil.instance.postData(traceId, "/ai/agents", null);
   }
@@ -226,6 +230,10 @@ class WoxApi {
 
   Future<void> sendChatRequest(String traceId, WoxAIChatData data) async {
     return await WoxHttpUtil.instance.postData(traceId, "/ai/chat", {"chatData": data.toJson()});
+  }
+
+  Future<void> stopChat(String traceId, String chatId) async {
+    return await WoxHttpUtil.instance.postData(traceId, "/ai/chat/stop", {"chatId": chatId});
   }
 
   Future<List<DoctorCheckResult>> doctorCheck(String traceId) async {

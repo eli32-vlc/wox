@@ -63,6 +63,9 @@ class WoxAIChatController extends GetxController {
   // Tool call expanded/collapsed states
   final RxMap<String, bool> toolCallExpandedStates = <String, bool>{}.obs;
 
+  // Track whether AI is currently generating a response
+  final RxBool isGenerating = false.obs;
+
   // Toggle tool call expanded/collapsed state
   void toggleToolCallExpanded(String conversationId) {
     if (toolCallExpandedStates.containsKey(conversationId)) {
@@ -616,7 +619,16 @@ class WoxAIChatController extends GetxController {
     }
     aiChatData.value.tools = selectedTools.toList();
 
+    isGenerating.value = true;
     WoxApi.instance.sendChatRequest(const UuidV4().generate(), aiChatData.value);
+  }
+
+  void stopChatGeneration() {
+    final chatId = aiChatData.value.id;
+    if (chatId.isEmpty) return;
+
+    isGenerating.value = false;
+    WoxApi.instance.stopChat(const UuidV4().generate(), chatId);
   }
 
   void sendMessage() {
@@ -645,6 +657,15 @@ class WoxAIChatController extends GetxController {
         SchedulerBinding.instance.addPostFrameCallback((_) {
           scrollToBottomOfAiChat();
         });
+      }
+    }
+
+    // Check if AI generation is done (last conversation is from assistant and has text)
+    final conversations = data.conversations;
+    if (conversations.isNotEmpty) {
+      final lastConv = conversations.last;
+      if (lastConv.role == WoxAIChatConversationRoleEnum.WOX_AIChat_CONVERSATION_ROLE_ASSISTANT.value && lastConv.text.isNotEmpty) {
+        isGenerating.value = false;
       }
     }
   }

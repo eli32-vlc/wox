@@ -165,10 +165,12 @@ type AIChatData struct {
 
 type AIChater interface {
 	Chat(ctx context.Context, aiChatData AIChatData, chatLoopCount int)
+	StopChat(ctx context.Context, chatId string) bool
 	GetAllTools(ctx context.Context) []MCPTool
 	GetAllAgents(ctx context.Context) []AIAgent
 	GetDefaultModel(ctx context.Context) Model
 	IsAutoFocusToChatInputWhenOpenWithQueryHotkey(ctx context.Context) bool
+	RefreshDiscoveryCache(ctx context.Context)
 }
 
 var EmptyChatOptions = ChatOptions{}

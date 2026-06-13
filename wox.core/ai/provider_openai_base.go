@@ -97,9 +97,10 @@ func (o *OpenAIBaseProvider) ChatStream(ctx context.Context, model common.Model,
 	var createdStream *ssestream.Stream[openai.ChatCompletionChunk]
 	if len(options.Tools) > 0 {
 		chatParams := openai.ChatCompletionNewParams{
-			Model:    model.Name,
-			Messages: o.convertConversations(conversations),
-			Tools:    convertedTools,
+			Model:       model.Name,
+			Messages:    o.convertConversations(conversations),
+			Tools:       convertedTools,
+			Temperature: openai.Float(0.3),
 			ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{
 				OfAuto: param.Opt[string]{},
 			},
@@ -107,8 +108,9 @@ func (o *OpenAIBaseProvider) ChatStream(ctx context.Context, model common.Model,
 		createdStream = client.Chat.Completions.NewStreaming(ctx, chatParams, requestOptions...)
 	} else {
 		createdStream = client.Chat.Completions.NewStreaming(ctx, openai.ChatCompletionNewParams{
-			Model:    model.Name,
-			Messages: o.convertConversations(conversations),
+			Model:       model.Name,
+			Messages:    o.convertConversations(conversations),
+			Temperature: openai.Float(0.3),
 		}, requestOptions...)
 	}
 

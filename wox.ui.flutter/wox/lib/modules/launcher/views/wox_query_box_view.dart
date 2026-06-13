@@ -31,6 +31,26 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
     return key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
   }
 
+  /// Returns true if the cursor is on the first line of a multi-line text field.
+  /// When true, ArrowUp can navigate to history; otherwise it moves cursor up.
+  bool _isCursorOnFirstLine(WoxLauncherController ctrl) {
+    final text = ctrl.queryBoxTextFieldController.text;
+    final offset = ctrl.queryBoxTextFieldController.selection.baseOffset;
+    if (offset <= 0) return true;
+    // If there's no newline before the cursor, we're on the first line
+    return text.lastIndexOf('\n', offset - 1) == -1;
+  }
+
+  /// Returns true if the cursor is on the last line of a multi-line text field.
+  /// When true, ArrowDown can navigate to results; otherwise it moves cursor down.
+  bool _isCursorOnLastLine(WoxLauncherController ctrl) {
+    final text = ctrl.queryBoxTextFieldController.text;
+    final offset = ctrl.queryBoxTextFieldController.selection.baseOffset;
+    if (offset < 0) return true;
+    // If there's no newline after the cursor, we're on the last line
+    return text.indexOf('\n', offset) == -1;
+  }
+
   // Helper method to convert LogicalKeyboardKey to number for quick select
   int? getNumberFromKey(LogicalKeyboardKey key) {
     switch (key) {
@@ -409,31 +429,36 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                           return KeyEventResult.ignored;
                         }
 
+                        // Let Shift+Enter insert a newline in multi-line mode
+                        if (HardwareKeyboard.instance.isShiftPressed) {
+                          break;
+                        }
+
                         if (Platform.isLinux) {
-                          // Record the normal KeyDown path so a later Linux KeyRepeatEvent from the same
-                          // physical press is swallowed instead of inserting newline or re-executing.
                           controller.markLinuxQueryBoxSubmitKeyHandled();
                         }
 
                         controller.executeDefaultAction(const UuidV4().generate());
                         return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowDown:
-                        controller.handleQueryBoxArrowDown();
-                        return KeyEventResult.handled;
-                      case LogicalKeyboardKey.arrowUp:
-                        controller.handleQueryBoxArrowUp();
-                        return KeyEventResult.handled;
-                      case LogicalKeyboardKey.arrowLeft:
-                        if (controller.isInGridMode()) {
-                          controller.handleQueryBoxArrowLeft();
+                        // In multi-line mode, let cursor move to next line if not at end
+                        if (_isCursorOnLastLine(controller)) {
+                          controller.handleQueryBoxArrowDown();
                           return KeyEventResult.handled;
                         }
                         break;
-                      case LogicalKeyboardKey.arrowRight:
-                        if (controller.isInGridMode()) {
-                          controller.handleQueryBoxArrowRight();
+                      case LogicalKeyboardKey.arrowUp:
+                        // In multi-line mode, let cursor move to previous line if not at start
+                        if (_isCursorOnFirstLine(controller)) {
+                          controller.handleQueryBoxArrowUp();
                           return KeyEventResult.handled;
                         }
+                        break;
+                      case LogicalKeyboardKey.arrowLeft:
+                        // Always pass through for natural text navigation
+                        break;
+                      case LogicalKeyboardKey.arrowRight:
+                        // Always pass through for natural text navigation
                         break;
                       case LogicalKeyboardKey.tab:
                         unawaited(controller.acceptQueryCompletionHint(const UuidV4().generate()));
@@ -455,8 +480,6 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                           break;
                         }
 
-                        // #4410 Linux can generate KeyRepeatEvents without a preceding KeyDownEvent, so also check the composing state to avoid submitting incomplete IME input.
-                        // This is a workaround for the underlying issue of unreliable KeyDown/KeyUp events on Linux, which may require a more robust solution in the future.
                         var composing = controller.queryBoxTextFieldController.value.composing;
                         var isComposing = composing.start >= 0 && composing.end >= 0;
                         if (isComposing) {
@@ -468,22 +491,20 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                         }
                         return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowDown:
-                        controller.handleQueryBoxArrowDown();
-                        return KeyEventResult.handled;
-                      case LogicalKeyboardKey.arrowUp:
-                        controller.handleQueryBoxArrowUp();
-                        return KeyEventResult.handled;
-                      case LogicalKeyboardKey.arrowLeft:
-                        if (controller.isInGridMode()) {
-                          controller.handleQueryBoxArrowLeft();
+                        if (_isCursorOnLastLine(controller)) {
+                          controller.handleQueryBoxArrowDown();
                           return KeyEventResult.handled;
                         }
                         break;
-                      case LogicalKeyboardKey.arrowRight:
-                        if (controller.isInGridMode()) {
-                          controller.handleQueryBoxArrowRight();
+                      case LogicalKeyboardKey.arrowUp:
+                        if (_isCursorOnFirstLine(controller)) {
+                          controller.handleQueryBoxArrowUp();
                           return KeyEventResult.handled;
                         }
+                        break;
+                      case LogicalKeyboardKey.arrowLeft:
+                        break;
+                      case LogicalKeyboardKey.arrowRight:
                         break;
                     }
                   }

@@ -88,15 +88,17 @@ var routers = map[string]func(w http.ResponseWriter, r *http.Request){
 	"/lang/json":      handleLangJson,
 
 	// ai
-	"/ai/providers":      handleAIProviders,
-	"/ai/commands/store": handleAICommandStore,
-	"/ai/models":         handleAIModels,
-	"/ai/model/default":  handleAIDefaultModel,
-	"/ai/ping":           handleAIPing,
-	"/ai/chat":           handleAIChat,
-	"/ai/mcp/tools":      handleAIMCPServerTools,
-	"/ai/mcp/tools/all":  handleAIMCPServerToolsAll,
-	"/ai/agents":         handleAIAgents,
+	"/ai/providers":         handleAIProviders,
+	"/ai/commands/store":    handleAICommandStore,
+	"/ai/models":            handleAIModels,
+	"/ai/model/default":     handleAIDefaultModel,
+	"/ai/ping":              handleAIPing,
+	"/ai/chat":              handleAIChat,
+	"/ai/chat/stop":         handleAIStopChat,
+	"/ai/mcp/tools":         handleAIMCPServerTools,
+	"/ai/mcp/tools/all":     handleAIMCPServerToolsAll,
+	"/ai/discovery/refresh": handleAIDiscoveryRefresh,
+	"/ai/agents":            handleAIAgents,
 
 	// doctor
 	"/doctor/check":                  handleDoctorCheck,
@@ -2217,6 +2219,44 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 	chater.Chat(ctx, chatData, 0)
 
 	writeSuccessResponse(w, "")
+}
+
+func handleAIStopChat(w http.ResponseWriter, r *http.Request) {
+	ctx := getTraceContext(r)
+
+	body, _ := io.ReadAll(r.Body)
+	chatIdResult := gjson.GetBytes(body, "chatId")
+	if !chatIdResult.Exists() {
+		writeErrorResponse(w, "chatId is empty")
+		return
+	}
+
+	chatId := chatIdResult.String()
+	chater := plugin.GetPluginManager().GetAIChatPluginChater(ctx)
+	if chater == nil {
+		writeErrorResponse(w, "ai chat plugin not found")
+		return
+	}
+
+	stopped := chater.StopChat(ctx, chatId)
+	if !stopped {
+		writeErrorResponse(w, "no active chat found for the given chatId")
+		return
+	}
+
+	logger.Info(ctx, fmt.Sprintf("AI: Stopped chat: %s", chatId))
+	writeSuccessResponse(w, "stopped")
+}
+
+func handleAIDiscoveryRefresh(w http.ResponseWriter, r *http.Request) {
+	ctx := getTraceContext(r)
+	chater := plugin.GetPluginManager().GetAIChatPluginChater(ctx)
+	if chater == nil {
+		writeErrorResponse(w, "ai chat plugin not found")
+		return
+	}
+	chater.RefreshDiscoveryCache(ctx)
+	writeSuccessResponse(w, "refresh started")
 }
 
 func handleAIMCPServerToolsAll(w http.ResponseWriter, r *http.Request) {

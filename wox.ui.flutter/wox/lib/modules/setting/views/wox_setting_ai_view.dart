@@ -118,6 +118,7 @@ class WoxSettingAIView extends WoxSettingBaseView {
     final woxTheme = WoxThemeUtil.instance.currentTheme.value;
     final titleColor = safeFromCssColor(woxTheme.previewFontColor);
     final subtitleColor = safeFromCssColor(woxTheme.previewPropertyTitleColor);
+    final accentColor = safeFromCssColor(woxTheme.actionItemActiveBackgroundColor);
     final borderColor = safeFromCssColor(woxTheme.previewSplitLineColor).withValues(alpha: 0.3);
 
     return Container(
@@ -125,9 +126,38 @@ class WoxSettingAIView extends WoxSettingBaseView {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            "Discovered Tools (${tools.length})",
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: titleColor),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  "Discovered Tools (${tools.length})",
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: titleColor),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  final tId = const UuidV4().generate();
+                  WoxApi.instance.refreshDiscoveryCache(tId).then((_) {
+                    // Reload the view — tools will update on next open
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.refresh, size: 13, color: accentColor),
+                      const SizedBox(width: 4),
+                      Text("Refresh", style: TextStyle(fontSize: 11, color: accentColor)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Container(
