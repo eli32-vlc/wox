@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -10,9 +12,12 @@ import 'package:wox/controllers/wox_setting_controller.dart';
 import 'package:wox/entity/wox_ai.dart';
 import 'package:wox/entity/wox_image.dart';
 import 'package:wox/entity/wox_list_item.dart';
+import 'package:wox/entity/wox_preview.dart';
 import 'package:wox/entity/wox_toolbar.dart';
 import 'package:wox/enums/wox_ai_conversation_role_enum.dart';
 import 'package:wox/enums/wox_image_type_enum.dart';
+import 'package:wox/enums/wox_preview_scroll_position_enum.dart';
+import 'package:wox/enums/wox_preview_type_enum.dart';
 import 'package:wox/utils/log.dart';
 import 'package:wox/utils/wox_theme_util.dart';
 
@@ -432,11 +437,11 @@ class WoxAIChatController extends GetxController {
     }
   }
 
-  // Focus to chat input
+  // Focus to query box (search bar serves as the chat input)
   void focusToChatInput(String traceId) {
-    Logger.instance.info(traceId, "focus to chat input");
+    Logger.instance.info(traceId, "focus to query box");
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      aiChatFocusNode.requestFocus();
+      launcherController.focusQueryBox();
     });
   }
 
@@ -547,20 +552,36 @@ class WoxAIChatController extends GetxController {
     return "";
   }
 
-  void sendMessage() {
-    var text = textController.text.trim();
-    // Check if AI model is selected
-    if (aiChatData.value.model.value.name.isEmpty) {
-      launcherController.showToolbarMsg(const UuidV4().generate(), ToolbarMsg(text: tr("ui_ai_chat_select_model"), displaySeconds: 3));
-      return;
-    }
-    // check if the text is empty
-    if (text.isEmpty) {
-      launcherController.showToolbarMsg(const UuidV4().generate(), ToolbarMsg(text: tr("ui_ai_chat_enter_message"), displaySeconds: 3));
-      return;
-    }
+  void startNewChat() {
+    aiChatData.value = WoxAIChatData.empty();
+    toolCallExpandedStates.clear();
+  }
 
-    // append user message to chat data
+  void openChatPreview() {
+    var previewChatData = aiChatData.value;
+    if (previewChatData.id.isEmpty) {
+      previewChatData.id = const UuidV4().generate();
+      previewChatData.createdAt = DateTime.now().millisecondsSinceEpoch;
+      previewChatData.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      previewChatData.model.value = AIModel.empty();
+      aiChatData.value = previewChatData;
+    }
+    var preview = WoxPreview(
+      previewType: WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code,
+      previewData: jsonEncode(previewChatData.toJson()),
+      scrollPosition: WoxPreviewScrollPositionEnum.WOX_PREVIEW_SCROLL_POSITION_BOTTOM.code,
+    );
+    launcherController.currentPreview.value = preview;
+    launcherController.isShowPreviewPanel.value = true;
+  }
+
+  void sendMessageWithText(String text) {
+    if (aiChatData.value.model.value.name.isEmpty) {
+      if (aiChatData.value.id.isNotEmpty) return;
+      return;
+    }
+    if (text.isEmpty) return;
+
     aiChatData.value.conversations.add(
       WoxAIChatConversation(
         id: const UuidV4().generate(),
@@ -574,7 +595,7 @@ class WoxAIChatController extends GetxController {
     );
     aiChatData.value.updatedAt = DateTime.now().millisecondsSinceEpoch;
 
-    textController.clear();
+    launcherController.queryBoxTextFieldController.clear();
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
       scrollToBottomOfAiChat();
@@ -583,6 +604,10 @@ class WoxAIChatController extends GetxController {
     aiChatData.value.tools = selectedTools.toList();
 
     WoxApi.instance.sendChatRequest(const UuidV4().generate(), aiChatData.value);
+  }
+
+  void sendMessage() {
+    sendMessageWithText(launcherController.queryBoxTextFieldController.text.trim());
   }
 
   String formatTimestamp(int timestamp) {
@@ -651,10 +676,10 @@ class WoxAIChatController extends GetxController {
     WoxApi.instance.sendChatRequest(const UuidV4().generate(), aiChatData.value);
   }
 
-  // Edit user message
+  // Edit user message - sets query box text instead of the removed chat input
   void editUserMessage(WoxAIChatConversation message) {
-    // Set the text controller to the message content
-    textController.text = message.text;
+    // Set the query box text to the message content
+    launcherController.queryBoxTextFieldController.text = message.text;
 
     // Find the index of the message
     int messageIndex = aiChatData.value.conversations.indexWhere((m) => m.id == message.id);

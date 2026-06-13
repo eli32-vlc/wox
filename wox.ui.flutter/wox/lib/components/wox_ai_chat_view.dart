@@ -1,29 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:uuid/v4.dart';
 import 'package:wox/components/wox_chat_toolcall_duration.dart';
 import 'package:wox/components/wox_image_view.dart';
 import 'package:wox/components/wox_list_view.dart';
 import 'package:wox/components/wox_markdown.dart';
-import 'package:wox/components/wox_platform_focus.dart';
 import 'package:wox/components/wox_preview_top_status_bar.dart';
 import 'package:wox/components/wox_selectable_text.dart';
 import 'package:wox/components/wox_tooltip.dart';
 import 'package:wox/controllers/wox_ai_chat_controller.dart';
-import 'package:wox/controllers/wox_launcher_controller.dart';
 import 'package:wox/controllers/wox_setting_controller.dart';
 import 'package:wox/entity/wox_ai.dart';
-import 'package:wox/entity/wox_hotkey.dart';
 import 'package:wox/entity/wox_theme.dart';
 import 'package:wox/enums/wox_ai_conversation_role_enum.dart';
 import 'package:wox/enums/wox_list_view_type_enum.dart';
-import 'package:wox/utils/colors.dart';
 import 'package:wox/utils/log.dart';
-import 'package:wox/utils/strings.dart';
 import 'package:wox/utils/wox_interface_size_util.dart';
 import 'package:wox/utils/wox_theme_util.dart';
 import 'package:wox/utils/color_util.dart';
+import 'package:wox/utils/strings.dart';
 
 class WoxAIChatView extends GetView<WoxAIChatController> {
   const WoxAIChatView({super.key});
@@ -75,186 +70,12 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
         Column(
           children: [
             Padding(padding: EdgeInsets.symmetric(horizontal: _metrics.scaledSpacing(16), vertical: _metrics.scaledSpacing(8)), child: buildTopStatusBar()),
-            // Messages list
+            // Messages list (chat input is now the search bar)
             Expanded(
               child: SingleChildScrollView(
                 controller: controller.aiChatScrollController,
                 padding: EdgeInsets.symmetric(vertical: _metrics.scaledSpacing(16)),
                 child: Obx(() => Column(children: controller.aiChatData.value.conversations.map((message) => _buildMessageItem(message, context)).toList())),
-              ),
-            ),
-            // Input box and controls area
-            WoxPlatformFocus(
-              onKeyEvent: (FocusNode node, KeyEvent event) {
-                if (event is KeyDownEvent) {
-                  switch (event.logicalKey) {
-                    case LogicalKeyboardKey.escape:
-                      controller.launcherController.focusQueryBox();
-                      return KeyEventResult.handled;
-                    case LogicalKeyboardKey.enter:
-                      controller.sendMessage();
-                      return KeyEventResult.handled;
-                  }
-                }
-
-                var pressedHotkey = WoxHotkey.parseNormalHotkeyFromEvent(event);
-                if (pressedHotkey == null) {
-                  return KeyEventResult.ignored;
-                }
-
-                // Show chat select panel on the primary-modifier action hotkey.
-                if (controller.launcherController.isActionHotkey(pressedHotkey)) {
-                  controller.showChatSelectPanel();
-                  return KeyEventResult.handled;
-                }
-
-                if (controller.launcherController.executeLocalActionByHotkey(
-                  const UuidV4().generate(),
-                  pressedHotkey,
-                  allowedActionIds: {WoxLauncherController.localActionTogglePreviewFullscreenId},
-                )) {
-                  return KeyEventResult.handled;
-                }
-
-                return KeyEventResult.ignored;
-              },
-              // Wrap the input area content in a Column to place the expandable section above
-              child: Padding(
-                padding: EdgeInsets.all(_metrics.scaledSpacing(12)),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox.shrink(),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: safeFromCssColor(woxTheme.queryBoxBackgroundColor),
-                        borderRadius: BorderRadius.circular(woxTheme.queryBoxBorderRadius.toDouble()),
-                        border: Border.all(color: safeFromCssColor(woxTheme.previewPropertyTitleColor).withAlpha(25)),
-                      ),
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: controller.textController,
-                            focusNode: controller.aiChatFocusNode,
-                            decoration: InputDecoration(
-                              hintText: tr('ui_ai_chat_input_hint'),
-                              hintStyle: TextStyle(color: safeFromCssColor(woxTheme.previewPropertyTitleColor)),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(horizontal: _metrics.scaledSpacing(16), vertical: _metrics.scaledSpacing(10)),
-                            ),
-                            maxLines: null,
-                            keyboardType: TextInputType.multiline,
-                            cursorColor: safeFromCssColor(woxTheme.queryBoxCursorColor),
-                            // AI chat lives in the launcher preview surface, so
-                            // its controls follow density metrics while the
-                            // settings/plugin-setting controls keep their own sizes.
-                            style: TextStyle(fontSize: _metrics.resultSubtitleFontSize, color: safeFromCssColor(woxTheme.queryBoxFontColor)),
-                          ),
-                          // Input Box Toolbar (Send button, Tool icon)
-                          Container(
-                            height: _metrics.scaledSpacing(36),
-                            padding: EdgeInsets.symmetric(horizontal: _metrics.scaledSpacing(8)),
-                            decoration: BoxDecoration(border: Border(top: BorderSide(color: safeFromCssColor(woxTheme.previewPropertyTitleColor).withAlpha(25)))),
-                            child: Row(
-                              children: [
-                                // Tool configuration button - opens chat select panel
-                                Obx(
-                                  () => WoxTooltip(
-                                    // IconButton.tooltip would create a Material tooltip, so
-                                    // chat toolbar icons use the shared WoxTooltip wrapper.
-                                    message: tr('ui_ai_chat_configure_tools'),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.build,
-                                        size: _metrics.scaledSpacing(18),
-                                        color: controller.selectedTools.isNotEmpty ? getThemeTextColor() : getThemeTextColor().withAlpha(128),
-                                      ),
-                                      color: safeFromCssColor(woxTheme.actionItemActiveBackgroundColor),
-                                      onPressed: () {
-                                        controller.showToolsPanel();
-                                      },
-                                      padding: EdgeInsets.zero,
-                                      constraints: BoxConstraints(minWidth: _metrics.scaledSpacing(32), minHeight: _metrics.scaledSpacing(32)),
-                                    ),
-                                  ),
-                                ),
-                                // Agent selection button
-                                Obx(
-                                  () => WoxTooltip(
-                                    message: tr('ui_ai_chat_select_agent'),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.smart_toy,
-                                        size: _metrics.scaledSpacing(18),
-                                        color:
-                                            (controller.aiChatData.value.agentName != null && controller.aiChatData.value.agentName!.isNotEmpty)
-                                                ? getThemeTextColor()
-                                                : getThemeTextColor().withAlpha(128),
-                                      ),
-                                      color: safeFromCssColor(woxTheme.actionItemActiveBackgroundColor),
-                                      onPressed: () {
-                                        controller.showAgentsPanel();
-                                      },
-                                      padding: EdgeInsets.zero,
-                                      constraints: BoxConstraints(minWidth: _metrics.scaledSpacing(32), minHeight: _metrics.scaledSpacing(32)),
-                                    ),
-                                  ),
-                                ),
-                                // Model selection button
-                                Obx(
-                                  () => WoxTooltip(
-                                    message: tr('ui_ai_chat_select_model_title'),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.model_training,
-                                        size: _metrics.scaledSpacing(18),
-                                        color: controller.aiChatData.value.model.value.name.isNotEmpty ? getThemeTextColor() : getThemeTextColor().withAlpha(128),
-                                      ),
-                                      color: safeFromCssColor(woxTheme.actionItemActiveBackgroundColor),
-                                      onPressed: () {
-                                        controller.showModelsPanel();
-                                      },
-                                      padding: EdgeInsets.zero,
-                                      constraints: BoxConstraints(minWidth: _metrics.scaledSpacing(32), minHeight: _metrics.scaledSpacing(32)),
-                                    ),
-                                  ),
-                                ),
-                                // Model Name Display
-                                Obx(
-                                  () => Text(
-                                    controller.aiChatData.value.model.value.name.isEmpty ? tr("ui_ai_chat_select_model") : controller.aiChatData.value.model.value.name,
-                                    style: TextStyle(color: getThemeTextColor(), fontSize: _metrics.smallLabelFontSize),
-                                  ),
-                                ),
-
-                                const Spacer(),
-                                // Send button container (unchanged)
-                                InkWell(
-                                  onTap: () => controller.sendMessage(),
-                                  child: Container(
-                                    padding: EdgeInsets.symmetric(horizontal: _metrics.scaledSpacing(8), vertical: _metrics.scaledSpacing(4)),
-                                    decoration: BoxDecoration(color: safeFromCssColor(woxTheme.actionItemActiveBackgroundColor), borderRadius: BorderRadius.circular(4)),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.keyboard_return, size: _metrics.scaledSpacing(14), color: safeFromCssColor(woxTheme.actionItemActiveFontColor)),
-                                        SizedBox(width: _metrics.scaledSpacing(4)),
-                                        Text(
-                                          tr('ui_ai_chat_send'),
-                                          style: TextStyle(fontSize: _metrics.smallLabelFontSize, color: safeFromCssColor(woxTheme.actionItemActiveFontColor)),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ],

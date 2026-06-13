@@ -312,7 +312,6 @@ func (r *AIChatPlugin) QueryFallback(ctx context.Context, query plugin.Query) []
 									Timestamp: util.GetSystemTimestamp(),
 								},
 							},
-							//TODO: let user customize the default tools, just like model
 							Tools: lo.Map(r.GetAllTools(ctx), func(tool common.MCPTool, _ int) string {
 								return tool.Name
 							}),
@@ -326,10 +325,7 @@ func (r *AIChatPlugin) QueryFallback(ctx context.Context, query plugin.Query) []
 							QuerySelection: selection.Selection{},
 						})
 
-						util.Go(ctx, "focus to chat input", func() {
-							time.Sleep(time.Millisecond * 300)
-							plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
-						})
+						plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
 					},
 				},
 			},
@@ -391,6 +387,14 @@ func (r *AIChatPlugin) reloadMCPServers(ctx context.Context) {
 			mcpTools = append(mcpTools, tool)
 		}
 	}
+
+	// Load built-in macOS system tools
+	macosTools := GetMacOSTools()
+	mcpTools = append(mcpTools, macosTools...)
+
+	// Load auto-discovery tools
+	discoveryTools := GetDiscoveryTools()
+	mcpTools = append(mcpTools, discoveryTools...)
 
 	r.mcpToolsMap = mcpTools
 
@@ -694,98 +698,35 @@ func (r *AIChatPlugin) Query(ctx context.Context, query plugin.Query) plugin.Que
 	r.resultChatIdMap.Clear()
 
 	if query.Search == "" {
-		// add the new chat result for user to create a new chat if there is no search
 		results = append(results, r.getNewChatPreviewData(ctx))
-	}
-
-	for i, chat := range r.chats {
+	} else if len(r.chats) > 0 {
+		// Return only the most recently active chat so the preview panel opens
+		// when the fallback action calls ChangeQuery("chat ...").
+		chat := r.chats[0]
 		previewData, err := json.Marshal(chat)
-		if err != nil {
-			r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("Failed to marshal chat preview data: %s", err.Error()))
-			continue
-		}
-
-		// filter chat by query
-		if query.Search != "" && !strings.Contains(chat.Title, query.Search) {
-			continue
-		}
-
-		resultId := uuid.NewString()
-		r.resultChatIdMap.Store(chat.Id, resultId)
-
-		continueChatText := "i18n:ui_ai_chat_continue_chat"
-		if len(chat.Conversations) == 0 {
-			continueChatText = "i18n:ui_ai_chat_start_chat"
-		}
-
-		// use agent icon
-		resultIcon := aiChatIcon
-		if chat.AgentName != "" {
-			for _, agent := range r.agents {
-				if agent.Name == chat.AgentName {
-					resultIcon = agent.Icon
-					break
-				}
-			}
-		}
-
-		group, groupScore := r.getResultGroup(ctx, chat)
-		results = append(results, plugin.QueryResult{
-			Id:    resultId,
-			Title: chat.Title,
-			Icon:  resultIcon,
-			Preview: plugin.WoxPreview{
-				PreviewType:    plugin.WoxPreviewTypeChat,
-				PreviewData:    string(previewData),
-				ScrollPosition: plugin.WoxPreviewScrollPositionBottom,
-			},
-			Actions: []plugin.QueryResultAction{
-				{
-					Name:                   continueChatText,
-					PreventHideAfterAction: true,
-					ContextData:            common.ContextData{"chatId": chat.Id},
-					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-						// focus to chat input
-						plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
+		if err == nil {
+			resultId := uuid.NewString()
+			r.resultChatIdMap.Store(chat.Id, resultId)
+			results = append(results, plugin.QueryResult{
+				Id:    resultId,
+				Title: chat.Title,
+				Icon:  aiChatIcon,
+				Preview: plugin.WoxPreview{
+					PreviewType:    plugin.WoxPreviewTypeChat,
+					PreviewData:    string(previewData),
+					ScrollPosition: plugin.WoxPreviewScrollPositionBottom,
+				},
+				Actions: []plugin.QueryResultAction{
+					{
+						Name:                   "i18n:ui_ai_chat_start_chat",
+						PreventHideAfterAction: true,
+						Action: func(ctx context.Context, actionContext plugin.ActionContext) {
+							plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
+						},
 					},
 				},
-				{
-					Name:                   "i18n:ui_ai_chat_delete_chat",
-					Icon:                   common.TrashIcon,
-					PreventHideAfterAction: true,
-					ContextData:            common.ContextData{"chatId": chat.Id},
-					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-						// delete chat
-						r.chats = append(r.chats[:i], r.chats[i+1:]...)
-						r.saveChats(ctx)
-
-						// refresh the query results
-						r.api.ChangeQuery(ctx, common.PlainQuery{
-							QueryType:      plugin.QueryTypeInput,
-							QueryText:      query.RawQuery,
-							QuerySelection: selection.Selection{},
-						})
-					},
-				},
-				{
-					Name:                   "i18n:ui_ai_chat_summarize_chat",
-					Icon:                   common.NewWoxImageSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M5 5.5C5 6.33 5.67 7 6.5 7h4v10.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5V7h4c.83 0 1.5-.67 1.5-1.5S18.33 4 17.5 4h-11C5.67 4 5 4.67 5 5.5"/></svg>`),
-					PreventHideAfterAction: true,
-					ContextData:            common.ContextData{"chatId": chat.Id},
-					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-						chatId := actionContext.ContextData["chatId"]
-						for _, chat := range r.chats {
-							if chat.Id == chatId {
-								r.summarizeChat(ctx, chat)
-								break
-							}
-						}
-					},
-				},
-			},
-			Group:      group,
-			GroupScore: groupScore,
-		})
+			})
+		}
 	}
 
 	return plugin.NewQueryResponse(results)

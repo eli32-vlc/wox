@@ -4289,6 +4289,21 @@ class WoxLauncherController extends GetxController {
   void executeDefaultAction(String traceId) {
     Logger.instance.info(traceId, "execute default action");
 
+    // If there's text in the search bar, route to AI chat
+    if (queryBoxTextFieldController.text.trim().isNotEmpty) {
+      var aiChatController = Get.find<WoxAIChatController>();
+      // Start a fresh chat session if none active
+      if (aiChatController.aiChatData.value.id.isEmpty) {
+        aiChatController.startNewChat();
+      }
+      // Open the chat preview panel
+      if (!isShowPreviewPanel.value || currentPreview.value.previewType != WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
+        aiChatController.openChatPreview();
+      }
+      aiChatController.sendMessage();
+      return;
+    }
+
     if (activeResultViewController.items.isEmpty) {
       final actions = buildUnifiedActions(traceId, null);
       final defaultAction = actions.firstWhereOrNull((action) => action.isDefault) ?? actions.firstWhereOrNull((action) => action.hotkey.toLowerCase() == "enter");
