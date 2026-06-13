@@ -1962,6 +1962,9 @@ class WoxLauncherController extends GetxController {
     isQueryBoxAtBottom.value = params.queryBoxAtBottom;
     forceWindowWidth = params.windowWidth > 0 ? params.windowWidth.toDouble() : 0;
     forceMaxResultCount = params.maxResultCount;
+
+    // Restore AI chat preview if there's an active session
+    _restoreAiChatPreviewIfNeeded(traceId);
     forceHideOnBlur = params.hideOnBlur;
 
     final targetHeight = calculateInitialShowWindowHeight(shouldPreserveIncomingQuery);
@@ -2016,6 +2019,20 @@ class WoxLauncherController extends GetxController {
 
     WoxApi.instance.onShow(traceId);
     unawaited(refreshGlance(traceId, "windowShown"));
+  }
+
+  void _restoreAiChatPreviewIfNeeded(String traceId) {
+    var aiChatController = Get.find<WoxAIChatController>();
+    if (aiChatController.aiChatData.value.id.isNotEmpty) {
+      var data = aiChatController.aiChatData.value;
+      var preview = WoxPreview(
+        previewType: WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code,
+        previewData: jsonEncode(data.toJson()),
+        scrollPosition: WoxPreviewScrollPositionEnum.WOX_PREVIEW_SCROLL_POSITION_BOTTOM.code,
+      );
+      currentPreview.value = preview;
+      isShowPreviewPanel.value = true;
+    }
   }
 
   void resetLayoutState(String traceId) {
@@ -4289,14 +4306,13 @@ class WoxLauncherController extends GetxController {
   void executeDefaultAction(String traceId) {
     Logger.instance.info(traceId, "execute default action");
 
-    // If there's text in the search bar, route to AI chat
-    if (queryBoxTextFieldController.text.trim().isNotEmpty) {
+    // Route text to AI chat. Plugin results are not auto-selected on Enter.
+    var text = queryBoxTextFieldController.text.trim();
+    if (text.isNotEmpty) {
       var aiChatController = Get.find<WoxAIChatController>();
-      // Start a fresh chat session if none active
       if (aiChatController.aiChatData.value.id.isEmpty) {
         aiChatController.startNewChat();
       }
-      // Open the chat preview panel
       if (!isShowPreviewPanel.value || currentPreview.value.previewType != WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
         aiChatController.openChatPreview();
       }
@@ -4304,16 +4320,7 @@ class WoxLauncherController extends GetxController {
       return;
     }
 
-    if (activeResultViewController.items.isEmpty) {
-      final actions = buildUnifiedActions(traceId, null);
-      final defaultAction = actions.firstWhereOrNull((action) => action.isDefault) ?? actions.firstWhereOrNull((action) => action.hotkey.toLowerCase() == "enter");
-      if (defaultAction != null) {
-        executeAction(traceId, null, defaultAction);
-        return;
-      }
-    }
-
-    // Get the active result
+    // No text: execute the active plugin result if any
     if (activeResultViewController.items.isEmpty) {
       Logger.instance.debug(traceId, "no results to execute");
       return;
@@ -4325,7 +4332,6 @@ class WoxLauncherController extends GetxController {
       return;
     }
 
-    // Get the active action (from action panel if visible, otherwise default action)
     WoxResultAction? actionToExecute;
     if (isShowActionPanel.value && actionListViewController.items.isNotEmpty) {
       actionToExecute = actionListViewController.activeItem.data;

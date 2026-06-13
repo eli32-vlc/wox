@@ -13,7 +13,6 @@ import (
 	"wox/setting/definition"
 	"wox/setting/validator"
 	"wox/util"
-	"wox/util/selection"
 
 	"github.com/google/uuid"
 	"github.com/samber/lo"
@@ -282,55 +281,7 @@ func (r *AIChatPlugin) IsAutoFocusToChatInputWhenOpenWithQueryHotkey(ctx context
 }
 
 func (r *AIChatPlugin) QueryFallback(ctx context.Context, query plugin.Query) []plugin.QueryResult {
-	fallbackSearchSetting := r.api.GetSetting(ctx, "enable_fallback_search")
-	isEnableFallbackSearch := fallbackSearchSetting == "true"
-	if !isEnableFallbackSearch {
-		return []plugin.QueryResult{}
-	}
-
-	fallbackSearchTitle := r.api.GetTranslation(ctx, "plugin_ai_chat_fallback_search_chat_for")
-	fallbackSearchTitle = strings.ReplaceAll(fallbackSearchTitle, "%s", query.RawQuery)
-
-	return []plugin.QueryResult{
-		{
-			Title: fallbackSearchTitle,
-			Icon:  aiChatIcon,
-			Actions: []plugin.QueryResultAction{
-				{
-					Name:                   "i18n:plugin_ai_chat_start_chat",
-					PreventHideAfterAction: true,
-					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-						r.Chat(ctx, common.AIChatData{
-							Id:    uuid.NewString(),
-							Title: query.RawQuery,
-							Model: r.GetDefaultModel(ctx),
-							Conversations: []common.Conversation{
-								{
-									Id:        uuid.NewString(),
-									Role:      common.ConversationRoleUser,
-									Text:      query.RawQuery,
-									Timestamp: util.GetSystemTimestamp(),
-								},
-							},
-							Tools: lo.Map(r.GetAllTools(ctx), func(tool common.MCPTool, _ int) string {
-								return tool.Name
-							}),
-							CreatedAt: util.GetSystemTimestamp(),
-							UpdatedAt: util.GetSystemTimestamp(),
-						}, 0)
-
-						r.api.ChangeQuery(ctx, common.PlainQuery{
-							QueryType:      plugin.QueryTypeInput,
-							QueryText:      "chat " + query.RawQuery,
-							QuerySelection: selection.Selection{},
-						})
-
-						plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
-					},
-				},
-			},
-		},
-	}
+	return nil
 }
 
 func (r *AIChatPlugin) GetDefaultModel(ctx context.Context) common.Model {
@@ -513,32 +464,51 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 		r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Selected tools: %v", aiChatData.Tools))
 	}
 
-	if aiChatData.AgentName != "" && chatLoopCount == 0 {
-		for _, agent := range r.agents {
-			if agent.Name == aiChatData.AgentName {
-				r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Using agent: %s", agent.Name))
+	// Fall back to default model if none specified
+	if aiChatData.Model.Name == "" {
+		aiChatData.Model = r.GetDefaultModel(ctx)
+	}
 
-				if agent.Prompt != "" {
-					systemPrompt := common.Conversation{
-						Id:        uuid.NewString(),
-						Role:      common.ConversationRoleSystem,
-						Text:      agent.Prompt,
-						Timestamp: util.GetSystemTimestamp(),
+	// Add default system prompt for new conversations
+	if chatLoopCount == 0 {
+		hasAgentPrompt := false
+		if aiChatData.AgentName != "" {
+			for _, agent := range r.agents {
+				if agent.Name == aiChatData.AgentName {
+					r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Using agent: %s", agent.Name))
+					hasAgentPrompt = true
+
+					if agent.Prompt != "" {
+						systemPrompt := common.Conversation{
+							Id:        uuid.NewString(),
+							Role:      common.ConversationRoleSystem,
+							Text:      agent.Prompt,
+							Timestamp: util.GetSystemTimestamp(),
+						}
+						aiChatData.Conversations = append([]common.Conversation{systemPrompt}, aiChatData.Conversations...)
 					}
 
-					aiChatData.Conversations = append([]common.Conversation{systemPrompt}, aiChatData.Conversations...)
-				}
+					if agent.Model.Name != "" {
+						aiChatData.Model = agent.Model
+					}
 
-				if agent.Model.Name != "" {
-					aiChatData.Model = agent.Model
+					if len(agent.Tools) > 0 {
+						aiChatData.Tools = agent.Tools
+					}
+					break
 				}
-
-				if len(agent.Tools) > 0 {
-					aiChatData.Tools = agent.Tools
-				}
-
-				break
 			}
+		}
+
+		// Add default system prompt if no agent prompt was set
+		if !hasAgentPrompt {
+			defaultPrompt := common.Conversation{
+				Id:        uuid.NewString(),
+				Role:      common.ConversationRoleSystem,
+				Text:      "You are a macOS AI assistant with access to system tools. You can check system status, manage files, control media, search the web, and run commands. Use the available tools to gather real-time information when answering questions about the user's system. Be concise and accurate.",
+				Timestamp: util.GetSystemTimestamp(),
+			}
+			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)
 		}
 	}
 
@@ -698,42 +668,8 @@ func (r *AIChatPlugin) getNewChatPreviewData(ctx context.Context) plugin.QueryRe
 }
 
 func (r *AIChatPlugin) Query(ctx context.Context, query plugin.Query) plugin.QueryResponse {
-	var results []plugin.QueryResult
-	r.resultChatIdMap.Clear()
-
-	if query.Search == "" {
-		results = append(results, r.getNewChatPreviewData(ctx))
-	} else if len(r.chats) > 0 {
-		// Return only the most recently active chat so the preview panel opens
-		// when the fallback action calls ChangeQuery("chat ...").
-		chat := r.chats[0]
-		previewData, err := json.Marshal(chat)
-		if err == nil {
-			resultId := uuid.NewString()
-			r.resultChatIdMap.Store(chat.Id, resultId)
-			results = append(results, plugin.QueryResult{
-				Id:    resultId,
-				Title: chat.Title,
-				Icon:  aiChatIcon,
-				Preview: plugin.WoxPreview{
-					PreviewType:    plugin.WoxPreviewTypeChat,
-					PreviewData:    string(previewData),
-					ScrollPosition: plugin.WoxPreviewScrollPositionBottom,
-				},
-				Actions: []plugin.QueryResultAction{
-					{
-						Name:                   "i18n:ui_ai_chat_start_chat",
-						PreventHideAfterAction: true,
-						Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-							plugin.GetPluginManager().GetUI().FocusToChatInput(ctx)
-						},
-					},
-				},
-			})
-		}
-	}
-
-	return plugin.NewQueryResponse(results)
+	// AI chat is triggered directly via the HTTP API. No query results needed.
+	return plugin.NewQueryResponse(nil)
 }
 
 func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData) {

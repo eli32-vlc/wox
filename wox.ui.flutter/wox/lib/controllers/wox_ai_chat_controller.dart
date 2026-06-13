@@ -555,6 +555,16 @@ class WoxAIChatController extends GetxController {
   void startNewChat() {
     aiChatData.value = WoxAIChatData.empty();
     toolCallExpandedStates.clear();
+    _fetchDefaultModel();
+  }
+
+  Future<void> _fetchDefaultModel() async {
+    try {
+      var model = await WoxApi.instance.findDefaultAIModel(const UuidV4().generate());
+      aiChatData.value.model.value = model;
+    } catch (_) {
+      // Default model unavailable; backend will fallback via GetDefaultModel()
+    }
   }
 
   void openChatPreview() {
@@ -563,7 +573,6 @@ class WoxAIChatController extends GetxController {
       previewChatData.id = const UuidV4().generate();
       previewChatData.createdAt = DateTime.now().millisecondsSinceEpoch;
       previewChatData.updatedAt = DateTime.now().millisecondsSinceEpoch;
-      previewChatData.model.value = AIModel.empty();
       aiChatData.value = previewChatData;
     }
     var preview = WoxPreview(
@@ -573,13 +582,10 @@ class WoxAIChatController extends GetxController {
     );
     launcherController.currentPreview.value = preview;
     launcherController.isShowPreviewPanel.value = true;
+    launcherController.resizeHeight(traceId: const UuidV4().generate(), reason: "ai chat preview opened");
   }
 
   void sendMessageWithText(String text) {
-    if (aiChatData.value.model.value.name.isEmpty) {
-      if (aiChatData.value.id.isNotEmpty) return;
-      return;
-    }
     if (text.isEmpty) return;
 
     aiChatData.value.conversations.add(
