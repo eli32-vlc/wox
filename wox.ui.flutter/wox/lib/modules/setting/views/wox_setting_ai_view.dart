@@ -7,7 +7,9 @@ import 'package:wox/api/wox_api.dart';
 import 'package:wox/components/plugin/wox_setting_plugin_table_view.dart';
 import 'package:wox/entity/setting/wox_plugin_setting_table.dart';
 import 'package:wox/modules/setting/views/wox_setting_base.dart';
+import 'package:wox/utils/color_util.dart';
 import 'package:wox/utils/consts.dart';
+import 'package:wox/utils/wox_theme_util.dart';
 
 class WoxSettingAIView extends WoxSettingBaseView {
   const WoxSettingAIView({super.key});
@@ -113,6 +115,11 @@ class WoxSettingAIView extends WoxSettingBaseView {
   }
 
   Widget _buildDiscoveredToolsList(List<dynamic> tools) {
+    final woxTheme = WoxThemeUtil.instance.currentTheme.value;
+    final titleColor = safeFromCssColor(woxTheme.previewFontColor);
+    final subtitleColor = safeFromCssColor(woxTheme.previewPropertyTitleColor);
+    final borderColor = safeFromCssColor(woxTheme.previewSplitLineColor).withValues(alpha: 0.3);
+
     return Container(
       constraints: BoxConstraints(maxWidth: GENERAL_SETTING_TABLE_WIDTH),
       child: Column(
@@ -120,13 +127,13 @@ class WoxSettingAIView extends WoxSettingBaseView {
         children: [
           Text(
             "Discovered Tools (${tools.length})",
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Theme.of(Get.context!).textTheme.titleMedium?.color),
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: titleColor),
           ),
           const SizedBox(height: 12),
           Container(
             constraints: const BoxConstraints(maxHeight: 300),
             decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(Get.context!).dividerColor.withValues(alpha: 0.3)),
+              border: Border.all(color: borderColor),
               borderRadius: BorderRadius.circular(8),
             ),
             child: ListView.builder(
@@ -142,14 +149,14 @@ class WoxSettingAIView extends WoxSettingBaseView {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.build, size: 14, color: Colors.grey),
+                      Icon(Icons.build, size: 14, color: subtitleColor),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text.rich(
                           TextSpan(
                             children: [
-                              TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                              if (desc.isNotEmpty) TextSpan(text: ' — $desc', style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color)),
+                              TextSpan(text: name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: titleColor)),
+                              if (desc.isNotEmpty) TextSpan(text: ' — $desc', style: TextStyle(fontSize: 12, color: subtitleColor)),
                             ],
                           ),
                         ),

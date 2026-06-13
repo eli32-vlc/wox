@@ -36,7 +36,6 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
 
     return Obx(() {
       final title = controller.aiChatData.value.title.isEmpty ? tr('ui_ai_chat_new_chat') : controller.aiChatData.value.title;
-      final isFullscreen = controller.launcherController.isPreviewFullscreen.value;
       final toolCount = controller.availableTools.length;
 
       return WoxPreviewTopStatusBar(
@@ -49,11 +48,12 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
         ),
         actions: [
           WoxPreviewTopStatusBarAction(
-            tooltip: controller.launcherController.previewFullscreenHotkeyLabel,
+            tooltip: tr('ui_ai_chat_new_chat'),
             onPressed: () {
-              controller.launcherController.togglePreviewFullscreen(const UuidV4().generate());
+              controller.startNewChat();
+              controller.openChatPreview();
             },
-            icon: Icon(isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen),
+            icon: const Icon(Icons.add),
           ),
         ],
       );
@@ -347,7 +347,11 @@ class WoxAIChatView extends GetView<WoxAIChatController> {
           _buildDetailItem(tr('ui_ai_chat_tool_detail_id'), info.id),
           _buildDetailItem(tr('ui_ai_chat_tool_detail_name'), info.name),
           _buildDetailItem(tr('ui_ai_chat_tool_detail_params'), info.status == ToolCallStatus.streaming ? info.delta : info.arguments.toString()),
-          if (info.response.isNotEmpty) _buildDetailItem(tr('ui_ai_chat_tool_detail_response'), info.response),
+          if (info.response.isNotEmpty)
+            _buildDetailItem(tr('ui_ai_chat_tool_detail_response'),
+              info.response.length > 500
+                  ? '${info.response.substring(0, 500)}\n...'
+                  : info.response),
         ],
       ),
     );

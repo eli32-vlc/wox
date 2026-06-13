@@ -554,6 +554,9 @@ class WoxAIChatController extends GetxController {
 
   void startNewChat() {
     aiChatData.value = WoxAIChatData.empty();
+    aiChatData.value.id = const UuidV4().generate();
+    aiChatData.value.createdAt = DateTime.now().millisecondsSinceEpoch;
+    aiChatData.value.updatedAt = DateTime.now().millisecondsSinceEpoch;
     toolCallExpandedStates.clear();
     _fetchDefaultModel();
   }

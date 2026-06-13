@@ -894,7 +894,11 @@ func runCmd(name string, args ...string) (string, error) {
 		}
 		return "", fmt.Errorf("command %s failed: %s", name, err.Error())
 	}
-	// Filter out non-printable control chars except newlines
+	// Return empty string for empty output
+	if len(out) == 0 {
+		return "", nil
+	}
+	// Filter out non-printable control chars except newlines and tabs
 	var sb strings.Builder
 	for _, r := range string(out) {
 		if r == '\n' || r == '\t' || r >= 32 {

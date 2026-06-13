@@ -23,7 +23,7 @@ type DiscoveredApp struct {
 type DiscoveredPackage struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
-	Type        string `json:"type"` // "formula" or "cask"
+	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -41,17 +41,19 @@ func GetDiscoveryTools() []common.MCPTool {
 		scanPlistFilesTool(),
 		scanLaunchdServicesTool(),
 		scanUserLaunchAgentsTool(),
+		readPlistTool(),
 	}
 }
 
 func scanApplicationsTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_apps",
-		Description: "Scan /Applications and ~/Applications directories for installed applications. Returns app names, paths, bundle IDs, and versions.",
+		Description: "Scan /Applications and ~/Applications directories for installed applications. Uses Spotlight (mdfind) for fast indexing and mdls for metadata.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"search": {Type: jsonschema.String, Description: "Optional search term to filter apps by name"},
+				"limit":  {Type: jsonschema.Integer, Description: "Maximum results (default 50)"},
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
@@ -59,53 +61,55 @@ func scanApplicationsTool() common.MCPTool {
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
 			}
+			limit := 50
+			if l, ok := args["limit"].(float64); ok {
+				limit = int(l)
+			}
 
-			dirs := []string{"/Applications", filepath.Join(os.Getenv("HOME"), "Applications")}
 			var apps []DiscoveredApp
+			dirs := []string{"/Applications", filepath.Join(os.Getenv("HOME"), "Applications")}
 
 			for _, dir := range dirs {
 				entries, err := os.ReadDir(dir)
 				if err != nil {
 					continue
 				}
-
 				for _, entry := range entries {
 					if !strings.HasSuffix(entry.Name(), ".app") {
 						continue
 					}
-
 					appName := strings.TrimSuffix(entry.Name(), ".app")
 					if searchFilter != "" && !strings.Contains(strings.ToLower(appName), searchFilter) {
 						continue
 					}
+					appPath := filepath.Join(dir, entry.Name())
 
 					app := DiscoveredApp{
 						Name: appName,
-						Path: filepath.Join(dir, entry.Name()),
+						Path: appPath,
 					}
 
-					// Try to read Info.plist for bundle ID and version
-					plistPath := filepath.Join(dir, entry.Name(), "Contents", "Info.plist")
-					if info, err := os.ReadFile(plistPath); err == nil {
-						content := string(info)
-						// Simple parsing for common plist keys
-						if id := extractPlistValue(content, "CFBundleIdentifier"); id != "" {
-							app.BundleId = id
-						}
-						if ver := extractPlistValue(content, "CFBundleShortVersionString"); ver != "" {
-							app.Version = ver
-						}
-						if app.BundleId == "" {
-							if id := extractPlistValue(content, "CFBundleName"); id != "" {
-								app.BundleId = id
-							}
-						}
+					// Use mdls (Spotlight) to get bundle ID — handles binary plists
+					if out, err := runCmd("mdls", "-name", "kMDItemCFBundleIdentifier", "-raw", appPath); err == nil {
+						app.BundleId = strings.TrimSpace(out)
+					}
+					if out, err := runCmd("mdls", "-name", "kMDItemVersion", "-raw", appPath); err == nil {
+						app.Version = strings.TrimSpace(out)
 					}
 
 					apps = append(apps, app)
+					if len(apps) >= limit {
+						break
+					}
+				}
+				if len(apps) >= limit {
+					break
 				}
 			}
 
+			if apps == nil {
+				apps = []DiscoveredApp{}
+			}
 			result, _ := json.MarshalIndent(apps, "", "  ")
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
@@ -116,12 +120,13 @@ func scanApplicationsTool() common.MCPTool {
 func scanHomebrewTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_homebrew",
-		Description: "Scan Homebrew for installed formulae and casks. Requires Homebrew to be installed.",
+		Description: "Scan Homebrew for installed formulae and casks using brew info JSON output for rich metadata. Requires Homebrew to be installed.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"search": {Type: jsonschema.String, Description: "Optional search term to filter packages by name"},
 				"type":   {Type: jsonschema.String, Description: "Package type: 'formula', 'cask', or 'all' (default)"},
+				"limit":  {Type: jsonschema.Integer, Description: "Maximum results (default 100)"},
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
@@ -133,9 +138,73 @@ func scanHomebrewTool() common.MCPTool {
 			if t, ok := args["type"].(string); ok {
 				pkgType = t
 			}
+			limit := 100
+			if l, ok := args["limit"].(float64); ok {
+				limit = int(l)
+			}
 
 			var pkgs []DiscoveredPackage
 
+			// Try JSON output first (richer data)
+			out, err := runCmd("brew", "info", "--json=v2", "--installed")
+			if err == nil {
+				// Parse JSON: brew info --json=v2 returns {"formulae": [...], "casks": [...]}
+				// Simple parsing of name/token, version, desc fields
+				parseBrewJSON := func(data string, ptype string) {
+					lines := strings.Split(data, "\n")
+					var currentName, currentVersion, currentDesc string
+					inCasks := false
+					for _, line := range lines {
+						line = strings.TrimSpace(line)
+						if strings.Contains(line, "\"casks\"") {
+							inCasks = true
+							currentName = ""
+							continue
+						}
+						if ptype == "formula" && inCasks {
+							break
+						}
+						if ptype == "cask" && !inCasks {
+							continue
+						}
+						// Extract name/token
+						if strings.Contains(line, "\"full_token\"") || strings.Contains(line, "\"token\"") || strings.Contains(line, "\"name\"") {
+							currentName = extractJSONStringField(line)
+						}
+						if strings.Contains(line, "\"versioned_formulae\"") { // version follows
+							if idx := strings.Index(line, ":"); idx != -1 {
+								currentVersion = strings.TrimSpace(line[:idx])
+							}
+						}
+						if strings.Contains(line, "\"version\"") && !strings.Contains(line, "\"versioned\"") {
+							currentVersion = extractJSONStringField(line)
+						}
+						if strings.Contains(line, "\"desc\"") {
+							currentDesc = extractJSONStringField(line)
+							if currentName != "" {
+								if searchFilter == "" || strings.Contains(strings.ToLower(currentName), searchFilter) {
+									pkgs = append(pkgs, DiscoveredPackage{
+										Name: currentName, Version: currentVersion,
+										Type: ptype, Description: currentDesc,
+									})
+								}
+								currentName = ""
+							}
+						}
+					}
+				}
+				if pkgType == "all" || pkgType == "formula" {
+					parseBrewJSON(out, "formula")
+				}
+				if pkgType == "all" || pkgType == "cask" {
+					parseBrewJSON(out, "cask")
+				}
+				if len(pkgs) > 0 {
+					goto done
+				}
+			}
+
+			// Fallback to list --versions
 			if pkgType == "all" || pkgType == "formula" {
 				out, err := runCmd("brew", "list", "--formula", "--versions")
 				if err == nil {
@@ -159,7 +228,6 @@ func scanHomebrewTool() common.MCPTool {
 					}
 				}
 			}
-
 			if pkgType == "all" || pkgType == "cask" {
 				out, err := runCmd("brew", "list", "--cask", "--versions")
 				if err == nil {
@@ -184,8 +252,12 @@ func scanHomebrewTool() common.MCPTool {
 				}
 			}
 
+		done:
 			if pkgs == nil {
 				pkgs = []DiscoveredPackage{}
+			}
+			if len(pkgs) > limit {
+				pkgs = pkgs[:limit]
 			}
 			result, _ := json.MarshalIndent(pkgs, "", "  ")
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
@@ -197,12 +269,12 @@ func scanHomebrewTool() common.MCPTool {
 func scanPlistFilesTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_plists",
-		Description: "Scan plist files in common macOS preference and configuration directories",
+		Description: "Scan plist files in common macOS preference directories. Returns file paths and sizes. Use system_plist_read to read the content of a specific plist.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"search":   {Type: jsonschema.String, Description: "Optional search term to filter plist files by name"},
-				"location": {Type: jsonschema.String, Description: "Location: 'user' (~/Library/Preferences), 'system' (/Library/Preferences), 'global' (/Library/Managed Preferences), or 'all' (default)"},
+				"location": {Type: jsonschema.String, Description: "Location: 'user' (~/Library/Preferences), 'system' (/Library/Preferences), or 'all' (default)"},
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
@@ -215,17 +287,6 @@ func scanPlistFilesTool() common.MCPTool {
 				location = l
 			}
 
-			dirs := map[string]string{}
-			if location == "all" || location == "user" {
-				dirs["user"] = filepath.Join(os.Getenv("HOME"), "Library", "Preferences")
-			}
-			if location == "all" || location == "system" {
-				dirs["system"] = "/Library/Preferences"
-			}
-			if location == "all" || location == "global" {
-				dirs["global"] = "/Library/Managed Preferences"
-			}
-
 			type PlistEntry struct {
 				Path     string `json:"path"`
 				File     string `json:"file"`
@@ -234,28 +295,39 @@ func scanPlistFilesTool() common.MCPTool {
 			}
 
 			var entries []PlistEntry
+			dirs := map[string]string{}
+
+			if location == "all" || location == "user" {
+				dirs["user"] = filepath.Join(os.Getenv("HOME"), "Library", "Preferences")
+			}
+			if location == "all" || location == "system" {
+				dirs["system"] = "/Library/Preferences"
+			}
+
 			for loc, dir := range dirs {
-				filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						return nil
+				de, err := os.ReadDir(dir)
+				if err != nil {
+					continue
+				}
+				for _, e := range de {
+					if !strings.HasSuffix(e.Name(), ".plist") {
+						continue
 					}
-					if info.IsDir() && path != dir {
-						return filepath.SkipDir
+					if searchFilter != "" && !strings.Contains(strings.ToLower(e.Name()), searchFilter) {
+						continue
 					}
-					if !strings.HasSuffix(info.Name(), ".plist") {
-						return nil
-					}
-					if searchFilter != "" && !strings.Contains(strings.ToLower(info.Name()), searchFilter) {
-						return nil
+					info, _ := e.Info()
+					var size int64
+					if info != nil {
+						size = info.Size() / 1024
 					}
 					entries = append(entries, PlistEntry{
-						Path:     path,
-						File:     info.Name(),
+						Path:     filepath.Join(dir, e.Name()),
+						File:     e.Name(),
 						Location: loc,
-						SizeKB:   info.Size() / 1024,
+						SizeKB:   size,
 					})
-					return nil
-				})
+				}
 			}
 
 			if entries == nil {
@@ -271,7 +343,7 @@ func scanPlistFilesTool() common.MCPTool {
 func scanLaunchdServicesTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_services",
-		Description: "Scan system-wide launchd daemons in /Library/LaunchDaemons",
+		Description: "Scan system-wide launchd daemons. Reads service names and running status from launchctl in a single pass.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -284,7 +356,12 @@ func scanLaunchdServicesTool() common.MCPTool {
 				searchFilter = strings.ToLower(s)
 			}
 
-			return scanPlistDir("/Library/LaunchDaemons", searchFilter)
+			services := discoverServices("/Library/LaunchDaemons", searchFilter)
+			if services == nil {
+				services = []DiscoveredService{}
+			}
+			result, _ := json.MarshalIndent(services, "", "  ")
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
 		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
 	}
@@ -293,7 +370,7 @@ func scanLaunchdServicesTool() common.MCPTool {
 func scanUserLaunchAgentsTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_agents",
-		Description: "Scan user launch agents in ~/Library/LaunchAgents and /Library/LaunchAgents",
+		Description: "Scan user and system launch agents (~/Library/LaunchAgents and /Library/LaunchAgents). Reads names and status in a single pass.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -307,13 +384,13 @@ func scanUserLaunchAgentsTool() common.MCPTool {
 			}
 
 			userDir := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents")
-			userResult, _ := scanPlistDirRaw(userDir, searchFilter)
-			systemResult, _ := scanPlistDirRaw("/Library/LaunchAgents", searchFilter)
+			combined := discoverServices(userDir, searchFilter)
+			sysServices := discoverServices("/Library/LaunchAgents", searchFilter)
+			combined = append(combined, sysServices...)
 
-			combined := []DiscoveredService{}
-			combined = append(combined, userResult...)
-			combined = append(combined, systemResult...)
-
+			if combined == nil {
+				combined = []DiscoveredService{}
+			}
 			result, _ := json.MarshalIndent(combined, "", "  ")
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 		},
@@ -321,22 +398,62 @@ func scanUserLaunchAgentsTool() common.MCPTool {
 	}
 }
 
-func scanPlistDir(dir string, searchFilter string) (common.Conversation, error) {
-	services, err := scanPlistDirRaw(dir, searchFilter)
-	if err != nil {
-		return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Error scanning %s: %s", dir, err.Error())}, nil
+func readPlistTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "system_plist_read",
+		Description: "Read the contents of a plist file. Handles both XML and binary plists by using plutil to convert. Returns the plist content as XML.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"path": {Type: jsonschema.String, Description: "Full path to the plist file, e.g. '~/Library/Preferences/com.apple.finder.plist'"},
+				"key":  {Type: jsonschema.String, Description: "Optional specific key to extract (e.g. 'CFBundleIdentifier')"},
+			},
+			Required: []string{"path"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			path, _ := args["path"].(string)
+			if path == "" {
+				return common.Conversation{}, fmt.Errorf("path is required")
+			}
+			if strings.HasPrefix(path, "~/") {
+				path = filepath.Join(os.Getenv("HOME"), path[2:])
+			}
+
+			key, _ := args["key"].(string)
+
+			var out string
+			var err error
+
+			if key != "" {
+				// PlistBuddy handles both XML and binary plists
+				out, err = runCmd("/usr/libexec/PlistBuddy", "-c", fmt.Sprintf("Print :%s", key), path)
+				if err != nil {
+					// Try defaults read as fallback
+					domain := strings.TrimSuffix(filepath.Base(path), ".plist")
+					out, err = runCmd("defaults", "read", domain, key)
+				}
+			} else {
+				// Convert to XML regardless of original format
+				out, err = runCmd("plutil", "-convert", "xml1", "-o", "-", path)
+				if err != nil {
+					return common.Conversation{}, fmt.Errorf("failed to read plist %s: %s", path, err.Error())
+				}
+			}
+
+			if err != nil {
+				return common.Conversation{}, fmt.Errorf("failed to read plist %s key %s: %s", path, key, err.Error())
+			}
+
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: strings.TrimSpace(out)}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_discovery"},
 	}
-	if services == nil {
-		services = []DiscoveredService{}
-	}
-	result, _ := json.MarshalIndent(services, "", "  ")
-	return common.Conversation{Role: common.ConversationRoleAssistant, Text: string(result)}, nil
 }
 
-func scanPlistDirRaw(dir string, searchFilter string) ([]DiscoveredService, error) {
+func discoverServices(dir string, searchFilter string) []DiscoveredService {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return []DiscoveredService{}, nil
+		return nil
 	}
 
 	var services []DiscoveredService
@@ -344,69 +461,53 @@ func scanPlistDirRaw(dir string, searchFilter string) ([]DiscoveredService, erro
 		if !strings.HasSuffix(entry.Name(), ".plist") {
 			continue
 		}
-
 		name := strings.TrimSuffix(entry.Name(), ".plist")
 		if searchFilter != "" && !strings.Contains(strings.ToLower(name), searchFilter) {
 			continue
 		}
-
-		svc := DiscoveredService{
+		services = append(services, DiscoveredService{
 			Name:      name,
-			Status:    "unknown",
+			Status:    getLaunchdStatus(name),
 			PlistPath: filepath.Join(dir, entry.Name()),
-		}
-
-		// Try to get service status from launchctl
-		if out, err := runCmd("launchctl", "list"); err == nil {
-			for _, line := range strings.Split(out, "\n") {
-				if strings.Contains(line, name) {
-					fields := strings.Fields(line)
-					if len(fields) >= 3 {
-						if fields[0] == "-" {
-							svc.Status = "stopped"
-						} else {
-							svc.Status = "running (PID: " + fields[0] + ")"
-						}
-					}
-					break
-				}
-			}
-		}
-
-		services = append(services, svc)
+		})
 	}
-
-	return services, nil
+	return services
 }
 
-// extractPlistValue does a simple key-value extraction from plist XML content.
-// This is intentionally basic - full plist parsing would require additional dependencies.
-func extractPlistValue(content string, key string) string {
-	// Look for <key>CFBundleIdentifier</key><string>com.example.app</string>
-	searchKey := "<key>" + key + "</key>"
-	idx := strings.Index(content, searchKey)
+func getLaunchdStatus(label string) string {
+	out, err := runCmd("launchctl", "print", fmt.Sprintf("system/%s", label))
+	if err != nil {
+		// Try user domain
+		out, err = runCmd("launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label))
+	}
+	if err != nil {
+		return "unknown"
+	}
+	if strings.Contains(out, "state = running") {
+		return "running"
+	}
+	return "stopped"
+}
+
+func extractJSONStringField(line string) string {
+	// Extract string value between quotes after the colon
+	idx := strings.Index(line, "\"")
 	if idx == -1 {
 		return ""
 	}
-
-	rest := content[idx+len(searchKey):]
-	// Trim whitespace
-	rest = strings.TrimSpace(rest)
-
-	// Look for <string>...</string>
-	if strings.HasPrefix(rest, "<string>") {
-		endIdx := strings.Index(rest, "</string>")
-		if endIdx != -1 {
-			return rest[8:endIdx]
-		}
+	rest := line[idx+1:]
+	endIdx := strings.LastIndex(rest, "\"")
+	if endIdx == -1 {
+		return rest
 	}
-
-	return ""
+	val := rest[:endIdx]
+	// Remove trailing comma
+	val = strings.TrimSuffix(val, ",")
+	val = strings.Trim(val, "\"")
+	return val
 }
 
 func init() {
-	// Register discovery tools
-	// Check if Homebrew is available
 	_, brewErr := exec.LookPath("brew")
 	if brewErr != nil {
 		fmt.Fprintf(os.Stderr, "macOS discovery: Homebrew not found, brew tools will not work\n")

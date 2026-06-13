@@ -1954,7 +1954,7 @@ class WoxLauncherController extends GetxController {
       pendingRestoredQueryId = null;
       pendingRestoredQueryWindowHeight = null;
       if (lastStartPage == WoxStartPageEnum.WOX_START_PAGE_MRU.code) {
-        queryMRU(traceId);
+        await clearQueryResults(traceId);
       } else {
         // Blank page - clear results
         await clearQueryResults(traceId);
@@ -2654,6 +2654,7 @@ class WoxLauncherController extends GetxController {
   void onQueryBoxTextChanged(String value) {
     // Suppress plugin queries when AI chat is the active view — text goes to AI on Enter
     if (isShowPreviewPanel.value && currentPreview.value.previewType == WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
+      _scrollQueryBoxToCaret();
       return;
     }
 
@@ -2690,6 +2691,14 @@ class WoxLauncherController extends GetxController {
         preserveCompletionHint: skipCompletionHint,
       );
     }
+  }
+
+  void _scrollQueryBoxToCaret() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (queryBoxScrollController.hasClients) {
+        queryBoxScrollController.jumpTo(queryBoxScrollController.position.maxScrollExtent);
+      }
+    });
   }
 
   Future<void> queryMRU(String traceId) async {
