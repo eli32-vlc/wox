@@ -1283,6 +1283,11 @@ class WoxLauncherController extends GetxController {
 
   /// Triggered when received query results from the server.
   Future<bool> onReceivedQueryResults(String traceId, String queryId, List<WoxQueryResult> receivedResults, {required bool isFinal, int? backendQueryStartTimestampMs}) async {
+    // Discard plugin results when AI chat preview is active (AI-only mode)
+    if (isShowPreviewPanel.value && currentPreview.value.previewType == WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
+      return true;
+    }
+
     final tracker = WoxTimeTracker.start(traceId, "ui_query_result_apply");
     final totalStartUs = tracker.checkpointUs();
     tracker.setRawString("queryId", queryId);
@@ -4354,30 +4359,8 @@ class WoxLauncherController extends GetxController {
   }
 
   void handleChatResponse(String traceId, WoxAIChatData data) {
-    for (var result in activeResultViewController.items) {
-      if (result.value.data.preview.previewType != WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
-        continue;
-      }
-
-      try {
-        var previewData = jsonDecode(result.value.data.preview.previewData);
-        if (previewData['Id'] != data.id) {
-          continue;
-        }
-      } catch (_) {
-        continue;
-      }
-
-      // update preview in result list view item
-      // otherwise, the preview will lost when user switch to other result and back
-      result.value.data.preview = WoxPreview(
-        previewType: WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code,
-        previewData: jsonEncode(data.toJson()),
-        scrollPosition: WoxPreviewScrollPositionEnum.WOX_PREVIEW_SCROLL_POSITION_BOTTOM.code,
-      );
-
-      Get.find<WoxAIChatController>().handleChatResponse(traceId, data);
-    }
+    var aiChatController = Get.find<WoxAIChatController>();
+    aiChatController.handleChatResponse(traceId, data);
   }
 
   void moveQueryBoxCursorToStart() {

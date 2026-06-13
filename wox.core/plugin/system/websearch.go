@@ -316,34 +316,6 @@ func (r *WebSearchPlugin) Query(ctx context.Context, query plugin.Query) plugin.
 	return plugin.NewQueryResponse(results)
 }
 
-func (r *WebSearchPlugin) QueryFallback(ctx context.Context, query plugin.Query) (results []plugin.QueryResult) {
-	for _, search := range r.webSearches {
-		if !search.Enabled {
-			continue
-		}
-		if !search.IsFallback {
-			continue
-		}
-
-		results = append(results, plugin.QueryResult{
-			Title: r.replaceVariables(ctx, search.Title, query.RawQuery),
-			Score: 100,
-			Icon:  search.Icon,
-			Actions: []plugin.QueryResultAction{
-				{
-					Name: "Search",
-					Icon: common.SearchIcon,
-					Action: func(ctx context.Context, actionContext plugin.ActionContext) {
-						r.openSearchUrls(ctx, search, query.RawQuery)
-					},
-				},
-			},
-		})
-	}
-
-	return results
-}
-
 func (r *WebSearchPlugin) querySelection(ctx context.Context, query plugin.Query) (results []plugin.QueryResult) {
 	//only support text selection
 	if query.Selection.Type == selection.SelectionTypeFile {
