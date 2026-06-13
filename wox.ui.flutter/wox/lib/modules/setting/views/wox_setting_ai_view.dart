@@ -15,9 +15,16 @@ class WoxSettingAIView extends WoxSettingBaseView {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder(
-      future: WoxApi.instance.findAIProviders(const UuidV4().generate()),
+      future: Future.wait([
+        WoxApi.instance.findAIProviders(const UuidV4().generate()),
+        WoxApi.instance.findAIMCPServerToolsAll(const UuidV4().generate()),
+      ]),
       builder: (context, snapshot) {
         if (snapshot.hasData) {
+          final data = snapshot.data!;
+          final providers = data[0] as List<dynamic>;
+          final tools = data[1] as List<dynamic>;
+
           return form(
             title: controller.tr("ui_ai"),
             description: controller.tr("ui_ai_description"),
@@ -49,7 +56,7 @@ class WoxSettingAIView extends WoxSettingBaseView {
                             "Width": 100,
                             "Type": "select",
                             "SelectOptions":
-                                snapshot.data!
+                                providers
                                     .map(
                                       (e) => {
                                         "Label": e.name,
@@ -90,11 +97,71 @@ class WoxSettingAIView extends WoxSettingBaseView {
                   }),
                 ),
               ),
+              settingTarget(
+                settingKey: "AIDiscoveredTools",
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: _buildDiscoveredToolsList(tools),
+                ),
+              ),
             ],
           );
         }
         return const SizedBox.shrink();
       },
+    );
+  }
+
+  Widget _buildDiscoveredToolsList(List<dynamic> tools) {
+    return Container(
+      constraints: BoxConstraints(maxWidth: GENERAL_SETTING_TABLE_WIDTH),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Discovered Tools (${tools.length})",
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Theme.of(Get.context!).textTheme.titleMedium?.color),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 300),
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(Get.context!).dividerColor.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              padding: const EdgeInsets.all(8),
+              itemCount: tools.length,
+              itemBuilder: (context, index) {
+                final tool = tools[index];
+                final name = tool.name ?? tool['Name'] ?? 'Unknown';
+                final desc = tool.description ?? tool['Description'] ?? '';
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.build, size: 14, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                              if (desc.isNotEmpty) TextSpan(text: ' — $desc', style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

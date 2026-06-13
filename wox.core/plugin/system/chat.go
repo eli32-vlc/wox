@@ -520,6 +520,8 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 		tools = lo.Filter(r.mcpToolsMap, func(tool common.MCPTool, _ int) bool {
 			return lo.Contains(aiChatData.Tools, tool.Name)
 		})
+	} else {
+		tools = r.mcpToolsMap
 	}
 
 	var responseId = uuid.NewString()

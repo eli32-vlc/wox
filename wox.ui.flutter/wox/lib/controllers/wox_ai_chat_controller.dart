@@ -607,6 +607,10 @@ class WoxAIChatController extends GetxController {
       scrollToBottomOfAiChat();
     });
 
+    // Eagerly select all available tools if none explicitly chosen
+    if (availableTools.isNotEmpty && selectedTools.isEmpty) {
+      selectedTools.assignAll(availableTools.map((t) => t.name).toSet());
+    }
     aiChatData.value.tools = selectedTools.toList();
 
     WoxApi.instance.sendChatRequest(const UuidV4().generate(), aiChatData.value);

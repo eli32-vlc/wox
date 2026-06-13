@@ -2652,6 +2652,11 @@ class WoxLauncherController extends GetxController {
   }
 
   void onQueryBoxTextChanged(String value) {
+    // Suppress plugin queries when AI chat is the active view — text goes to AI on Enter
+    if (isShowPreviewPanel.value && currentPreview.value.previewType == WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
+      return;
+    }
+
     final traceId = const UuidV4().generate();
     canArrowUpHistory = false;
     resultListViewController.isMouseMoved = false;
@@ -4618,6 +4623,11 @@ class WoxLauncherController extends GetxController {
 
   /// Update the result preview width ratio based on the query
   void updateResultPreviewWidthRatioOnQueryChanged(String traceId, PlainQuery query, QueryLayout queryLayout) {
+    // Don't alter layout when AI chat is the active view
+    if (isShowPreviewPanel.value && currentPreview.value.previewType == WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
+      return;
+    }
+
     double nextRatio = defaultResultPreviewRatio;
     if (query.isEmpty) {
       preferredResultPreviewRatio = nextRatio;
