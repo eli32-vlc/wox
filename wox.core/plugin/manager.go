@@ -3384,6 +3384,20 @@ func (e *queryExecution) stopScheduleWatchdog() {
 
 func (e *queryExecution) schedulePlugins() {
 	for _, pluginInstance := range e.manager.instances {
+		// In AI-only mode, only the AI chat plugin receives queries
+		if IsAIOnlyMode() {
+			if pluginInstance.Metadata.Id != "a9cfd85a-6e53-415c-9d44-68777aa6323d" {
+				continue
+			}
+			// Bypass canOperateQuery for AI chat — it handles everything in this mode
+			job := queryPluginJob{
+				pluginInstance: pluginInstance,
+				blocksFallback: true,
+			}
+			e.startPluginJob(job)
+			continue
+		}
+
 		job, ok := e.schedulePlugin(pluginInstance)
 		if !ok {
 			continue

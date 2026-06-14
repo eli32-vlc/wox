@@ -105,12 +105,12 @@ func GetDiscoveryTools() []common.MCPTool {
 func scanApplicationsTool() common.MCPTool {
 	return common.MCPTool{
 		Name:        "macos_discover_apps",
-		Description: "Scan /Applications and ~/Applications directories for installed applications. Uses Spotlight (mdfind) for fast indexing and mdls for metadata.",
+		Description: "Recursively scan /Applications, /System/Applications, and ~/Applications for installed applications. Uses Spotlight (mdfind) for fast indexing and mdls for metadata.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"search": {Type: jsonschema.String, Description: "Optional search term to filter apps by name"},
-				"limit":  {Type: jsonschema.Integer, Description: "Maximum results (default 50)"},
+				"limit":  {Type: jsonschema.Integer, Description: "Maximum results (default 500)"},
 			},
 		},
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
@@ -122,46 +122,40 @@ func scanApplicationsTool() common.MCPTool {
 			if s, ok := args["search"].(string); ok {
 				searchFilter = strings.ToLower(s)
 			}
-			limit := 50
+			limit := 500
 			if l, ok := args["limit"].(float64); ok {
 				limit = int(l)
 			}
 
-			var apps []DiscoveredApp
-			dirs := []string{"/Applications", filepath.Join(os.Getenv("HOME"), "Applications")}
+			dirs := []string{"/Applications", "/System/Applications", filepath.Join(os.Getenv("HOME"), "Applications")}
 
+			var apps []DiscoveredApp
 			for _, dir := range dirs {
-				entries, err := os.ReadDir(dir)
-				if err != nil {
-					continue
-				}
-				for _, entry := range entries {
-					if !strings.HasSuffix(entry.Name(), ".app") {
-						continue
+				filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+					if err != nil || len(apps) >= limit {
+						return nil
 					}
-					appName := strings.TrimSuffix(entry.Name(), ".app")
+					if !info.IsDir() || !strings.HasSuffix(info.Name(), ".app") {
+						return nil
+					}
+					appName := strings.TrimSuffix(info.Name(), ".app")
 					if searchFilter != "" && !strings.Contains(strings.ToLower(appName), searchFilter) {
-						continue
+						return filepath.SkipDir
 					}
-					appPath := filepath.Join(dir, entry.Name())
 
 					app := DiscoveredApp{
 						Name: appName,
-						Path: appPath,
+						Path: path,
 					}
-
-					if out, err := runCmd("mdls", "-name", "kMDItemCFBundleIdentifier", "-raw", appPath); err == nil {
+					if out, err := runCmd("mdls", "-name", "kMDItemCFBundleIdentifier", "-raw", path); err == nil {
 						app.BundleId = strings.TrimSpace(out)
 					}
-					if out, err := runCmd("mdls", "-name", "kMDItemVersion", "-raw", appPath); err == nil {
+					if out, err := runCmd("mdls", "-name", "kMDItemVersion", "-raw", path); err == nil {
 						app.Version = strings.TrimSpace(out)
 					}
-
 					apps = append(apps, app)
-					if len(apps) >= limit {
-						break
-					}
-				}
+					return filepath.SkipDir
+				})
 				if len(apps) >= limit {
 					break
 				}
@@ -213,56 +207,45 @@ func scanHomebrewTool() common.MCPTool {
 			// Try JSON output first (richer data)
 			out, err := runCmd("brew", "info", "--json=v2", "--installed")
 			if err == nil {
-				// Parse JSON: brew info --json=v2 returns {"formulae": [...], "casks": [...]}
-				// Simple parsing of name/token, version, desc fields
-				parseBrewJSON := func(data string, ptype string) {
-					lines := strings.Split(data, "\n")
-					var currentName, currentVersion, currentDesc string
-					inCasks := false
-					for _, line := range lines {
-						line = strings.TrimSpace(line)
-						if strings.Contains(line, "\"casks\"") {
-							inCasks = true
-							currentName = ""
-							continue
-						}
-						if ptype == "formula" && inCasks {
-							break
-						}
-						if ptype == "cask" && !inCasks {
-							continue
-						}
-						// Extract name/token
-						if strings.Contains(line, "\"full_token\"") || strings.Contains(line, "\"token\"") || strings.Contains(line, "\"name\"") {
-							currentName = extractJSONStringField(line)
-						}
-						if strings.Contains(line, "\"versioned_formulae\"") { // version follows
-							if idx := strings.Index(line, ":"); idx != -1 {
-								currentVersion = strings.TrimSpace(line[:idx])
+				type brewFormula struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+					Desc    string `json:"desc"`
+				}
+				type brewCask struct {
+					Token   string `json:"token"`
+					Version string `json:"version"`
+					Desc    string `json:"desc"`
+				}
+				type brewInfo struct {
+					Formulae []brewFormula `json:"formulae"`
+					Casks    []brewCask    `json:"casks"`
+				}
+
+				var info brewInfo
+				if jsonErr := json.Unmarshal([]byte(out), &info); jsonErr == nil {
+					if pkgType == "all" || pkgType == "formula" {
+						for _, f := range info.Formulae {
+							if searchFilter != "" && !strings.Contains(strings.ToLower(f.Name), searchFilter) {
+								continue
 							}
-						}
-						if strings.Contains(line, "\"version\"") && !strings.Contains(line, "\"versioned\"") {
-							currentVersion = extractJSONStringField(line)
-						}
-						if strings.Contains(line, "\"desc\"") {
-							currentDesc = extractJSONStringField(line)
-							if currentName != "" {
-								if searchFilter == "" || strings.Contains(strings.ToLower(currentName), searchFilter) {
-									pkgs = append(pkgs, DiscoveredPackage{
-										Name: currentName, Version: currentVersion,
-										Type: ptype, Description: currentDesc,
-									})
-								}
-								currentName = ""
-							}
+							pkgs = append(pkgs, DiscoveredPackage{
+								Name: f.Name, Version: f.Version,
+								Type: "formula", Description: f.Desc,
+							})
 						}
 					}
-				}
-				if pkgType == "all" || pkgType == "formula" {
-					parseBrewJSON(out, "formula")
-				}
-				if pkgType == "all" || pkgType == "cask" {
-					parseBrewJSON(out, "cask")
+					if pkgType == "all" || pkgType == "cask" {
+						for _, c := range info.Casks {
+							if searchFilter != "" && !strings.Contains(strings.ToLower(c.Token), searchFilter) {
+								continue
+							}
+							pkgs = append(pkgs, DiscoveredPackage{
+								Name: c.Token, Version: c.Version,
+								Type: "cask", Description: c.Desc,
+							})
+						}
+					}
 				}
 				if len(pkgs) > 0 {
 					goto done
@@ -568,24 +551,6 @@ func getLaunchdStatus(label string) string {
 		return "running"
 	}
 	return "stopped"
-}
-
-func extractJSONStringField(line string) string {
-	// Extract string value between quotes after the colon
-	idx := strings.Index(line, "\"")
-	if idx == -1 {
-		return ""
-	}
-	rest := line[idx+1:]
-	endIdx := strings.LastIndex(rest, "\"")
-	if endIdx == -1 {
-		return rest
-	}
-	val := rest[:endIdx]
-	// Remove trailing comma
-	val = strings.TrimSuffix(val, ",")
-	val = strings.Trim(val, "\"")
-	return val
 }
 
 func discoveryRefreshTool() common.MCPTool {

@@ -48,7 +48,7 @@ func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
 		Runtime:         "Go",
 		Description:     "i18n:plugin_ai_chat_plugin_description",
 		Icon:            aiChatIcon.String(),
-		TriggerKeywords: []string{"chat"},
+		TriggerKeywords: []string{"*", "chat"},
 		SupportedOS:     []string{"Windows", "Macos", "Linux"},
 		SettingDefinitions: definition.PluginSettingDefinitions{
 			{
@@ -720,12 +720,12 @@ func (r *AIChatPlugin) getNewChatPreviewData(ctx context.Context) plugin.QueryRe
 }
 
 func (r *AIChatPlugin) Query(ctx context.Context, query plugin.Query) plugin.QueryResponse {
-	// If query has search text, return empty (all results shown when query is empty)
-	if query.Search != "" {
-		return plugin.NewQueryResponse(nil)
+	// In AI-only mode, route all typed input as new AI chat messages
+	if plugin.IsAIOnlyMode() && query.Search != "" {
+		return r.newChatResultFromQuery(ctx, query.Search)
 	}
 
-	// Return saved chat sessions as search results
+	// Return saved chat sessions as search results when query is empty
 	var results []plugin.QueryResult
 
 	// Add "New Chat" entry always
@@ -775,6 +775,51 @@ func (r *AIChatPlugin) Query(ctx context.Context, query plugin.Query) plugin.Que
 	}
 
 	return plugin.NewQueryResponse(results)
+}
+
+func (r *AIChatPlugin) newChatResultFromQuery(ctx context.Context, searchText string) plugin.QueryResponse {
+	chatData := common.AIChatData{
+		Id:        uuid.NewString(),
+		Title:     searchText,
+		CreatedAt: util.GetSystemTimestamp(),
+		UpdatedAt: util.GetSystemTimestamp(),
+		Model:     r.GetDefaultModel(ctx),
+		Conversations: []common.Conversation{
+			{
+				Id:        uuid.NewString(),
+				Role:      common.ConversationRoleUser,
+				Text:      searchText,
+				Timestamp: util.GetSystemTimestamp(),
+			},
+		},
+	}
+
+	r.appendOrUpdateChatData(chatData)
+	r.saveChats(ctx)
+
+	util.Go(ctx, "ai chat from global query", func() {
+		r.Chat(util.NewTraceContext(), chatData, 0)
+	})
+
+	resultId := uuid.NewString()
+	r.resultChatIdMap.Store(chatData.Id, resultId)
+	previewData, _ := json.Marshal(chatData)
+
+	return plugin.NewQueryResponse([]plugin.QueryResult{
+		{
+			Id:       resultId,
+			Title:    searchText,
+			SubTitle: "AI Chat",
+			Icon:     aiChatIcon,
+			Preview: plugin.WoxPreview{
+				PreviewType:    plugin.WoxPreviewTypeChat,
+				PreviewData:    string(previewData),
+				ScrollPosition: plugin.WoxPreviewScrollPositionBottom,
+			},
+			Group:      "i18n:ui_ai_chat_new_chat",
+			GroupScore: 1000,
+		},
+	})
 }
 
 func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData) {
