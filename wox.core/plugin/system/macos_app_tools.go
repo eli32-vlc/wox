@@ -161,6 +161,7 @@ func calendarCreateEventTool() common.MCPTool {
 				alarmMin = int(a)
 			}
 
+			// Build the AppleScript piece by piece to avoid fmt.Sprintf spanning conditionals
 			script := fmt.Sprintf(`tell application "Calendar"
 	set targetCal to first calendar
 	if "%s" is not "" then
@@ -168,19 +169,19 @@ func calendarCreateEventTool() common.MCPTool {
 			set targetCal to (first calendar whose title is "%s")
 		end try
 	end if
-	set newEvent to make new event at end of targetCal with properties {summary:"%s", start date:(date "%s"), end date:(date "%s")`
+	set newEvent to make new event at end of targetCal with properties {summary:"%s", start date:(date "%s"), end date:(date "%s")`, calName, calName, title, startDate, endDate)
 			if location != "" {
 				script += fmt.Sprintf(`, location:"%s"`, location)
 			}
 			if notes != "" {
 				script += fmt.Sprintf(`, description:"%s"`, notes)
 			}
-			script += `}
+			script += fmt.Sprintf(`}
 	if %d > 0 then
 		tell newEvent to make new display alarm at end with properties {trigger interval:-%d}
 	end if
 	return "Created event: " & summary of newEvent
-end tell`, calName, calName, title, startDate, endDate, alarmMin, alarmMin)
+end tell`, alarmMin, alarmMin)
 
 			out, err := runAppleScript(script)
 			if err != nil {
@@ -353,14 +354,14 @@ func remindersCreateTool() common.MCPTool {
 			set targetList to (first list whose name is "%s")
 		end try
 	end if
-	set newReminder to make new reminder at end of targetList with properties {name:"%s", body:"%s"}`
+	set newReminder to make new reminder at end of targetList with properties {name:"%s", body:"%s"`, listName, listName, title, notes)
 			if dueDate != "" {
 				script += fmt.Sprintf(`, due date:(date "%s")`, dueDate)
 			}
 			if priority > 0 {
 				script += fmt.Sprintf(`, priority:%d`, priority)
 			}
-			script += `
+			script += `}
 	return "Created reminder: " & name of newReminder
 end tell`
 			out, err := runAppleScript(script)
@@ -609,7 +610,7 @@ func mailSendTool() common.MCPTool {
 			script := fmt.Sprintf(`tell application "Mail"
 	set newMessage to make new outgoing message with properties {subject:"%s", content:"%s", visible:true}
 	tell newMessage
-		make new to recipient at end of to recipients with properties {address:"%s"}`
+		make new to recipient at end of to recipients with properties {address:"%s"}`, subject, body, to)
 			if cc != "" {
 				script += fmt.Sprintf(`
 		make new cc recipient at end of cc recipients with properties {address:"%s"}`, cc)
@@ -618,11 +619,11 @@ func mailSendTool() common.MCPTool {
 				script += fmt.Sprintf(`
 		make new bcc recipient at end of bcc recipients with properties {address:"%s"}`, bcc)
 			}
-			script += `
+			script += fmt.Sprintf(`
 	end tell
 	send newMessage
 	return "Email sent to " & "%s" & " with subject: " & "%s"
-end tell`, subject, body, to, to, subject)
+end tell`, to, subject)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to send email: %s", err.Error())

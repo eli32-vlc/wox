@@ -749,8 +749,10 @@ func axScrollTool() common.MCPTool {
 			lines := 1
 			if l, ok := args["lines"].(float64); ok {
 				lines = int(l)
-			}	keyCode := 125 // down arrow
-	switch strings.ToLower(direction) {
+			}
+
+			keyCode := 125 // down arrow
+			switch strings.ToLower(direction) {
 	case "up":
 		keyCode = 126
 	case "down":
