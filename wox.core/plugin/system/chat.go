@@ -82,6 +82,16 @@ func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
 				},
 			},
 			{
+				Type: definition.PluginSettingDefinitionTypeTextBox,
+				Value: &definition.PluginSettingValueTextBox{
+					Key:          "custom_system_prompt",
+					DefaultValue: "",
+					Label:        "i18n:plugin_ai_chat_custom_system_prompt",
+					Tooltip:      "i18n:plugin_ai_chat_custom_system_prompt_tooltip",
+					MaxLines:     10,
+				},
+			},
+			{
 				Type: definition.PluginSettingDefinitionTypeSelectAIModel,
 				Value: &definition.PluginSettingValueSelectAIModel{
 					Key:     "default_model",
@@ -366,10 +376,18 @@ func (r *AIChatPlugin) reloadMCPServers(ctx context.Context) {
 		}
 	}
 
-	// Load built-in tools (macOS + system)
+	// Load built-in tools (macOS + system + macOS app + AX + Finder + extra tools)
 	macosTools := GetMacOSTools()
+	macosAppTools := GetMacOSAppTools()
+	macosAXTools := GetMacOSAXTools()
+	macosFinderTools := GetMacOSFinderTools()
+	macosExtraTools := GetMacOSExtraTools()
 	systemTools := GetSystemTools()
 	builtinTools := append([]common.MCPTool{}, macosTools...)
+	builtinTools = append(builtinTools, macosAppTools...)
+	builtinTools = append(builtinTools, macosAXTools...)
+	builtinTools = append(builtinTools, macosFinderTools...)
+	builtinTools = append(builtinTools, macosExtraTools...)
 	builtinTools = append(builtinTools, systemTools...)
 
 	// Load per-item tools (apps, brew, services, agents, prefs, schemes)
@@ -531,10 +549,7 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 
 		// Add default system prompt if no agent prompt was set
 		if !hasAgentPrompt {
-			defaultPrompt := common.Conversation{
-				Id:   uuid.NewString(),
-				Role: common.ConversationRoleSystem,
-				Text: `You are a macOS assistant. Answer concisely — 1-3 sentences. Use tools to get real data instead of guessing.
+			defaultPromptText := `You are a macOS assistant. Answer concisely — 1-3 sentences. Use tools to get real data instead of guessing.
 
 Every app, service, brew package, preference domain, and URL scheme has its own individual tool. Use search tools (search_apps, search_services, search_agents, search_brew, search_prefs, search_url_schemes) to discover what's available, then call the specific tool by name.
 
@@ -548,8 +563,23 @@ Available tool categories:
 - Per-preference: prefs_read_<domain>, prefs_write_<domain>
 - Shortcuts: run_shortcut_<Name>
 - App Intents: intent_<App>_<Intent>
+- macOS built-in apps: calendar_*, reminders_*, mail_*, notes_*, contacts_*, messages_*, maps_*, music_*, safari_*
+- Accessibility / GUI automation: macos_ax_get_process_list, macos_ax_launch_app, macos_ax_focus_app, macos_ax_get_element, macos_ax_get_focused_element, macos_ax_get_window_elements, macos_ax_get_element_tree, macos_ax_click_element, macos_ax_set_text, macos_ax_get_text, macos_ax_show_menu, macos_ax_scroll
+- Finder/file management: macos_finder_list_windows, macos_finder_get_selection, macos_finder_select_file, macos_finder_new_folder, macos_finder_duplicate, macos_finder_compress, macos_finder_get_info, macos_finder_tag
+- Extra: macos_screenshot_capture, macos_screenshot_timed, macos_screenshot_capture_window, macos_notification_post, macos_terminal_run_command, macos_dictionary_lookup, macos_get_installed_apps, macos_icloud_drive_list, macos_facetime_call, macos_voicememos_list, macos_system_settings_open, macos_shortcuts_run, macos_siri_suggestions, macos_apple_intelligence_status
 
-Always use tools to gather real data — never fabricate system information.`,
+Always use tools to gather real data — never fabricate system information.`
+
+			// Append custom system prompt if configured
+			customPrompt := r.api.GetSetting(ctx, "custom_system_prompt")
+			if customPrompt != "" {
+				defaultPromptText = defaultPromptText + "\n\n" + customPrompt
+			}
+
+			defaultPrompt := common.Conversation{
+				Id:   uuid.NewString(),
+				Role: common.ConversationRoleSystem,
+				Text: defaultPromptText,
 				Timestamp: util.GetSystemTimestamp(),
 			}
 			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)

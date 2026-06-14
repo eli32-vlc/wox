@@ -1964,5 +1964,7 @@
   "ui_hotkey_overview_webview_refresh": "Refresh webview preview",
   "ui_hotkey_overview_webview_back": "Go back in webview preview",
   "ui_hotkey_overview_webview_forward": "Go forward in webview preview",
-  "ui_hotkey_overview_webview_inspector": "Open webview inspector"
+  "ui_hotkey_overview_webview_inspector": "Open webview inspector",
+  "plugin_ai_chat_custom_system_prompt": "Custom System Prompt",
+  "plugin_ai_chat_custom_system_prompt_tooltip": "Optional custom instructions appended to the default system prompt. Use this to set persistent rules, preferences, or context for the AI."
 }
