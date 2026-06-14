@@ -7,17 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 	"wox/common"
 	"wox/plugin"
-	"wox/util"
 
 	"github.com/tmc/langchaingo/jsonschema"
 )
-
-const cacheFileName = "ai_discovery_cache.json"
-const cacheMaxAge = 30 * time.Minute
 
 type DiscoveredApp struct {
 	Name     string `json:"name"`
@@ -53,89 +47,8 @@ type SchemeEntry struct {
 	AppPath string `json:"appPath"`
 }
 
-type AIDiscoveryCacheData struct {
-	Apps        []DiscoveredApp     `json:"apps"`
-	Brew        []DiscoveredPackage `json:"brew"`
-	Services    []DiscoveredService `json:"services"`
-	Agents      []DiscoveredService `json:"agents"`
-	Daemons     []DiscoveredService `json:"daemons"`
-	Preferences []PrefEntry         `json:"preferences"`
-	Schemes     []SchemeEntry       `json:"schemes"`
-	LastScan    int64               `json:"lastScan"`
-}
-
-var (
-	cacheMu    sync.RWMutex
-	cacheData  *AIDiscoveryCacheData
-	cacheDirty bool
-)
-
-func aiCachePath() string {
-	return filepath.Join(util.GetLocation().GetCacheDirectory(), cacheFileName)
-}
-
-func loadDiscoveryCache() *AIDiscoveryCacheData {
-	cacheMu.RLock()
-	if cacheData != nil && !cacheDirty {
-		cacheMu.RUnlock()
-		return cacheData
-	}
-	cacheMu.RUnlock()
-
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
-	if cacheData != nil && !cacheDirty {
-		return cacheData
-	}
-
-	data, err := os.ReadFile(aiCachePath())
-	if err != nil {
-		cacheData = &AIDiscoveryCacheData{}
-		return cacheData
-	}
-
-	var cd AIDiscoveryCacheData
-	if err := json.Unmarshal(data, &cd); err != nil {
-		cacheData = &AIDiscoveryCacheData{}
-		return cacheData
-	}
-
-	now := time.Now().UnixMilli()
-	if now-cd.LastScan > cacheMaxAge.Milliseconds() {
-		cacheData = &AIDiscoveryCacheData{}
-		return cacheData
-	}
-
-	cacheData = &cd
-	return cacheData
-}
-
-func saveDiscoveryCache(cd *AIDiscoveryCacheData) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
-	cd.LastScan = time.Now().UnixMilli()
-	cacheData = cd
-	cacheDirty = false
-
-	dir := filepath.Dir(aiCachePath())
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return
-	}
-
-	data, err := json.MarshalIndent(cd, "", "  ")
-	if err != nil {
-		return
-	}
-
-	os.WriteFile(aiCachePath(), data, 0644)
-}
-
 func refreshPerItemTools(ctx context.Context) {
-	cacheMu.Lock()
-	cacheDirty = true
-	cacheMu.Unlock()
+	// No-op: per-item tools are now generic and search tools scan on demand
 }
 
 // ------- Scan functions (no registrar, no hub) -------
@@ -427,223 +340,272 @@ func extractURLSchemesFromPlistXML(xml string) []string {
 	return schemes
 }
 
-// ------- Per-item tool generation -------
+// ------- Generic action tools (replace per-item generated tools) -------
 
-func generateAppTools(apps []DiscoveredApp) []common.MCPTool {
-	var tools []common.MCPTool
-	for _, app := range apps {
-		appName := app.Name
-		appPath := app.Path
-		bundleId := app.BundleId
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("launch_%s", appName)),
-			Description: fmt.Sprintf("Launch %s application", appName),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				out, err := runCmd("open", "-a", appName)
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to launch %s: %s", appName, out)
-				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Launched %s", appName)}, nil
+func genericLaunchAppTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_launch_app",
+		Description: "Launch an application by name (e.g. 'Safari', 'Spotify'). Use search_apps first to find available apps.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"name": {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Spotify', 'Notes') — required"},
 			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("info_%s", appName)),
-			Description: fmt.Sprintf("Get information about %s application", appName),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				info := fmt.Sprintf("Name: %s\nPath: %s\nBundle ID: %s", appName, appPath, bundleId)
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: info}, nil
-			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
-
-		// URL schemes for this app
-		plistPath := filepath.Join(appPath, "Contents", "Info.plist")
-		if out, err := runCmd("plutil", "-convert", "xml1", "-o", "-", plistPath); err == nil {
-			schemes := extractURLSchemesFromPlistXML(out)
-			for _, scheme := range schemes {
-				s := scheme
-				tools = append(tools, common.MCPTool{
-					Name:        safeToolName(fmt.Sprintf("open_%s", s)),
-					Description: fmt.Sprintf("Open a URL with the %s:// scheme (handled by %s)", s, appName),
-					Parameters: jsonschema.Definition{
-						Type: jsonschema.Object,
-						Properties: map[string]jsonschema.Definition{
-							"path": {Type: jsonschema.String, Description: fmt.Sprintf("URL path for %s://", s)},
-						},
-						Required: []string{"path"},
-					},
-					Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-						path, _ := args["path"].(string)
-						url := fmt.Sprintf("%s://%s", s, strings.TrimPrefix(path, "/"))
-						out, err := runCmd("open", url)
-						if err != nil {
-							return common.Conversation{}, fmt.Errorf("failed to open %s: %s", url, out)
-						}
-						return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Opened %s", url)}, nil
-					},
-					ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-				})
+			Required: []string{"name"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			appName, _ := args["name"].(string)
+			if appName == "" {
+				return common.Conversation{}, fmt.Errorf("name is required")
 			}
-		}
+			out, err := runCmd("open", "-a", appName)
+			if err != nil {
+				return common.Conversation{}, fmt.Errorf("failed to launch %s: %s", appName, out)
+			}
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Launched %s", appName)}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
 	}
-	return tools
 }
 
-func generateBrewTools(pkgs []DiscoveredPackage) []common.MCPTool {
-	var tools []common.MCPTool
-	for _, pkg := range pkgs {
-		pkgName := pkg.Name
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("brew_upgrade_%s", pkgName)),
-			Description: fmt.Sprintf("Upgrade Homebrew %s %s", pkg.Type, pkgName),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				out, err := runCmd("brew", "upgrade", pkgName)
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to upgrade %s: %s", pkgName, out)
-				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: out}, nil
+func genericAppInfoTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_app_info",
+		Description: "Get information about an installed application (path, bundle ID, version). Use search_apps first to discover apps.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"name": {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Spotify') — required"},
 			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
+			Required: []string{"name"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			appName, _ := args["name"].(string)
+			if appName == "" {
+				return common.Conversation{}, fmt.Errorf("name is required")
+			}
+
+			// Find the app using mdfind
+			out, err := runCmd("mdfind", fmt.Sprintf("kMDItemKind == 'Application' && kMDItemDisplayName == '%s'c", appName))
+			if err != nil || out == "" {
+				return common.Conversation{}, fmt.Errorf("application '%s' not found", appName)
+			}
+			paths := strings.Split(strings.TrimSpace(out), "\n")
+			if len(paths) == 0 || paths[0] == "" {
+				return common.Conversation{}, fmt.Errorf("application '%s' not found", appName)
+			}
+			appPath := paths[0]
+
+			bundleId, _ := runCmd("mdls", "-name", "kMDItemCFBundleIdentifier", "-raw", appPath)
+			version, _ := runCmd("mdls", "-name", "kMDItemVersion", "-raw", appPath)
+
+			info := fmt.Sprintf("Name: %s\nPath: %s\nBundle ID: %s\nVersion: %s",
+				appName, appPath, strings.TrimSpace(bundleId), strings.TrimSpace(version))
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: info}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
 	}
-	return tools
 }
 
-func generateServiceTools(services []DiscoveredService, prefix string) []common.MCPTool {
-	var tools []common.MCPTool
-	for _, svc := range services {
-		name := svc.Name
-		plistPath := svc.PlistPath
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("%s_start_%s", prefix, name)),
-			Description: fmt.Sprintf("Start the %s %s", prefix, name),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				out, err := runCmd("launchctl", "load", plistPath)
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to start %s: %s", name, out)
-				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Started %s", name)}, nil
+func genericBrewUpgradeTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_brew_upgrade",
+		Description: "Upgrade a Homebrew formula or cask by package name. Use search_brew first to discover available packages.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"package": {Type: jsonschema.String, Description: "Homebrew package name (e.g. 'curl', 'node', 'firefox') — required"},
+				"type":    {Type: jsonschema.String, Description: "Package type: 'formula', 'cask', or '' (auto-detect, default)"},
 			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("%s_stop_%s", prefix, name)),
-			Description: fmt.Sprintf("Stop the %s %s", prefix, name),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				out, err := runCmd("launchctl", "unload", plistPath)
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to stop %s: %s", name, out)
-				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Stopped %s", name)}, nil
-			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("%s_status_%s", prefix, name)),
-			Description: fmt.Sprintf("Get the status of the %s %s", prefix, name),
-			Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				status := getLaunchdStatus(name)
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("%s status: %s", name, status)}, nil
-			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
+			Required: []string{"package"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			pkgName, _ := args["package"].(string)
+			if pkgName == "" {
+				return common.Conversation{}, fmt.Errorf("package is required")
+			}
+			out, err := runCmd("brew", "upgrade", pkgName)
+			if err != nil {
+				return common.Conversation{}, fmt.Errorf("failed to upgrade %s: %s", pkgName, out)
+			}
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: out}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
 	}
-	return tools
 }
 
-func generatePrefTools(entries []PrefEntry) []common.MCPTool {
-	var tools []common.MCPTool
-	seen := make(map[string]bool)
-	for _, entry := range entries {
-		domain := strings.TrimSuffix(entry.File, ".plist")
-		if seen[domain] {
-			continue
-		}
-		seen[domain] = true
-		d := domain
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("prefs_read_%s", d)),
-			Description: fmt.Sprintf("Read a preference key from %s", d),
-			Parameters: jsonschema.Definition{
-				Type: jsonschema.Object,
-				Properties: map[string]jsonschema.Definition{
-					"key": {Type: jsonschema.String, Description: "Preference key to read"},
-				},
+func genericServiceStartTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_service_start",
+		Description: "Start a launchd service/agent/daemon by plist label. Use search_services or search_agents first to discover available services.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"name": {Type: jsonschema.String, Description: "Launchd service label (e.g. 'com.apple.ScreenSharing', 'nginx') — required"},
 			},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				key, _ := args["key"].(string)
-				out, err := runCmd("defaults", "read", d, key)
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to read %s %s: %s", d, key, out)
+			Required: []string{"name"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			name, _ := args["name"].(string)
+			if name == "" {
+				return common.Conversation{}, fmt.Errorf("name is required")
+			}
+			// Try user agent dirs first, then system
+			dirs := []string{
+				filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents"),
+				"/Library/LaunchAgents",
+				"/Library/LaunchDaemons",
+				"/System/Library/LaunchDaemons",
+			}
+			for _, dir := range dirs {
+				plistPath := filepath.Join(dir, name+".plist")
+				if _, err := os.Stat(plistPath); err == nil {
+					out, err := runCmd("launchctl", "load", plistPath)
+					if err != nil {
+						return common.Conversation{}, fmt.Errorf("failed to start %s: %s", name, out)
+					}
+					return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Started %s", name)}, nil
 				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: strings.TrimSpace(out)}, nil
-			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
-
-		tools = append(tools, common.MCPTool{
-			Name:        safeToolName(fmt.Sprintf("prefs_write_%s", d)),
-			Description: fmt.Sprintf("Write a preference value to %s", d),
-			Parameters: jsonschema.Definition{
-				Type: jsonschema.Object,
-				Properties: map[string]jsonschema.Definition{
-					"key":   {Type: jsonschema.String, Description: "Preference key to write"},
-					"type":  {Type: jsonschema.String, Description: "Value type: string, int, bool, float"},
-					"value": {Type: jsonschema.String, Description: "Value to set"},
-				},
-			},
-			Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
-				key, _ := args["key"].(string)
-				valType, _ := args["type"].(string)
-				value, _ := args["value"].(string)
-				var out string
-				var err error
-				switch valType {
-				case "int":
-					out, err = runCmd("defaults", "write", d, key, "-int", value)
-				case "bool":
-					out, err = runCmd("defaults", "write", d, key, "-bool", value)
-				case "float":
-					out, err = runCmd("defaults", "write", d, key, "-float", value)
-				default:
-					out, err = runCmd("defaults", "write", d, key, value)
-				}
-				if err != nil {
-					return common.Conversation{}, fmt.Errorf("failed to write %s %s: %s", d, key, out)
-				}
-				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Set %s %s = %s (%s)", d, key, value, valType)}, nil
-			},
-			ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
-		})
+			}
+			return common.Conversation{}, fmt.Errorf("service '%s' not found in any launchd directory", name)
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
 	}
-	return tools
 }
 
-func safeToolName(name string) string {
-	result := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			return r
-		}
-		return '_'
-	}, name)
-	result = strings.TrimLeft(result, "_-")
-	if result == "" {
-		return "tool"
+func genericServiceStopTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_service_stop",
+		Description: "Stop a launchd service/agent/daemon by plist label. Use search_services or search_agents first to discover available services.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"name": {Type: jsonschema.String, Description: "Launchd service label (e.g. 'com.apple.ScreenSharing', 'nginx') — required"},
+			},
+			Required: []string{"name"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			name, _ := args["name"].(string)
+			if name == "" {
+				return common.Conversation{}, fmt.Errorf("name is required")
+			}
+			dirs := []string{
+				filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents"),
+				"/Library/LaunchAgents",
+				"/Library/LaunchDaemons",
+				"/System/Library/LaunchDaemons",
+			}
+			for _, dir := range dirs {
+				plistPath := filepath.Join(dir, name+".plist")
+				if _, err := os.Stat(plistPath); err == nil {
+					out, err := runCmd("launchctl", "unload", plistPath)
+					if err != nil {
+						return common.Conversation{}, fmt.Errorf("failed to stop %s: %s", name, out)
+					}
+					return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Stopped %s", name)}, nil
+				}
+			}
+			return common.Conversation{}, fmt.Errorf("service '%s' not found in any launchd directory", name)
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
 	}
-	return result
+}
+
+func genericServiceStatusTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_service_status",
+		Description: "Get the status of a launchd service/agent/daemon by plist label. Use search_services or search_agents first to discover available services.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"name": {Type: jsonschema.String, Description: "Launchd service label (e.g. 'com.apple.ScreenSharing', 'nginx') — required"},
+			},
+			Required: []string{"name"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			name, _ := args["name"].(string)
+			if name == "" {
+				return common.Conversation{}, fmt.Errorf("name is required")
+			}
+			status := getLaunchdStatus(name)
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("%s status: %s", name, status)}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
+	}
+}
+
+func genericPrefsReadTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_prefs_read",
+		Description: "Read a macOS preference value by domain and key. Use search_prefs first to discover available preference domains.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"domain": {Type: jsonschema.String, Description: "Preference domain name, e.g. 'com.apple.finder' (required)"},
+				"key":    {Type: jsonschema.String, Description: "Preference key to read (required)"},
+			},
+			Required: []string{"domain", "key"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			domain, _ := args["domain"].(string)
+			key, _ := args["key"].(string)
+			if domain == "" || key == "" {
+				return common.Conversation{}, fmt.Errorf("domain and key are required")
+			}
+			out, err := runCmd("defaults", "read", domain, key)
+			if err != nil {
+				return common.Conversation{}, fmt.Errorf("failed to read %s %s: %s", domain, key, out)
+			}
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: strings.TrimSpace(out)}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
+	}
+}
+
+func genericPrefsWriteTool() common.MCPTool {
+	return common.MCPTool{
+		Name:        "macos_prefs_write",
+		Description: "Write a macOS preference value by domain, key, value, and type.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"domain": {Type: jsonschema.String, Description: "Preference domain name, e.g. 'com.apple.finder' (required)"},
+				"key":    {Type: jsonschema.String, Description: "Preference key to write (required)"},
+				"value":  {Type: jsonschema.String, Description: "Value to set (required)"},
+				"type":   {Type: jsonschema.String, Description: "Value type: 'string' (default), 'int', 'bool', 'float'"},
+			},
+			Required: []string{"domain", "key", "value"},
+		},
+		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
+			domain, _ := args["domain"].(string)
+			key, _ := args["key"].(string)
+			value, _ := args["value"].(string)
+			valType, _ := args["type"].(string)
+			if domain == "" || key == "" {
+				return common.Conversation{}, fmt.Errorf("domain, key, and value are required")
+			}
+			if valType == "" {
+				valType = "string"
+			}
+			var out string
+			var err error
+			switch valType {
+			case "int":
+				out, err = runCmd("defaults", "write", domain, key, "-int", value)
+			case "bool":
+				out, err = runCmd("defaults", "write", domain, key, "-bool", value)
+			case "float":
+				out, err = runCmd("defaults", "write", domain, key, "-float", value)
+			default:
+				out, err = runCmd("defaults", "write", domain, key, value)
+			}
+			if err != nil {
+				return common.Conversation{}, fmt.Errorf("failed to write %s %s: %s", domain, key, out)
+			}
+			return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Set %s %s = %s", domain, key, value)}, nil
+		},
+		ServerConfig: &common.AIChatMCPServerConfig{Name: "macos_per_item"},
+	}
 }
 
 // ------- Generic search tools -------
@@ -909,49 +871,19 @@ func plistReadTool() common.MCPTool {
 // ------- Main entry point -------
 
 func GetPerItemTools(ctx context.Context, api plugin.API) []common.MCPTool {
-	cd := loadDiscoveryCache()
-
-	// If cache is empty (stale or first run), do a full scan synchronously
-	needsScan := false
-	if cd.LastScan == 0 {
-		needsScan = true
-	} else {
-		now := time.Now().UnixMilli()
-		if now-cd.LastScan > cacheMaxAge.Milliseconds() {
-			needsScan = true
-		}
-	}
-
-	if needsScan {
-		api.Log(ctx, plugin.LogLevelInfo, "AI: Scanning macOS for per-item tools (may take a few seconds)...")
-
-		cd.Apps = scanInstalledApps(ctx, "", 300)
-		cd.Brew = scanHomebrew(ctx, "", "all", 200)
-		cd.Services = discoverServices("/Library/LaunchDaemons", "")
-		cd.Agents = discoverServices(filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents"), "")
-		agentSys := discoverServices("/Library/LaunchAgents", "")
-		cd.Agents = append(cd.Agents, agentSys...)
-		cd.Daemons = discoverServices("/Library/LaunchDaemons", "")
-		daemonSys := discoverServices("/System/Library/LaunchDaemons", "")
-		cd.Daemons = append(cd.Daemons, daemonSys...)
-		cd.Preferences = scanPreferenceDomains(ctx, "", "all")
-		cd.Schemes = scanURLSchemes(ctx, "")
-
-		saveDiscoveryCache(cd)
-		api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Scanned %d apps, %d brew, %d services, %d agents, %d daemons, %d prefs, %d schemes",
-			len(cd.Apps), len(cd.Brew), len(cd.Services), len(cd.Agents), len(cd.Daemons), len(cd.Preferences), len(cd.Schemes)))
-	}
-
 	var tools []common.MCPTool
 
-	tools = append(tools, generateAppTools(cd.Apps)...)
-	tools = append(tools, generateBrewTools(cd.Brew)...)
-	tools = append(tools, generateServiceTools(cd.Services, "service")...)
-	tools = append(tools, generateServiceTools(cd.Agents, "agent")...)
-	tools = append(tools, generateServiceTools(cd.Daemons, "daemon")...)
-	tools = append(tools, generatePrefTools(cd.Preferences)...)
+	// Generic action tools (replacing thousands of per-item generated tools)
+	tools = append(tools, genericLaunchAppTool())
+	tools = append(tools, genericAppInfoTool())
+	tools = append(tools, genericBrewUpgradeTool())
+	tools = append(tools, genericServiceStartTool())
+	tools = append(tools, genericServiceStopTool())
+	tools = append(tools, genericServiceStatusTool())
+	tools = append(tools, genericPrefsReadTool())
+	tools = append(tools, genericPrefsWriteTool())
 
-	// Generic search tools
+	// Search/discovery tools (scan on demand)
 	tools = append(tools, searchAppsTool())
 	tools = append(tools, searchBrewTool())
 	tools = append(tools, searchPrefsTool())
@@ -961,6 +893,6 @@ func GetPerItemTools(ctx context.Context, api plugin.API) []common.MCPTool {
 	tools = append(tools, searchDaemonsTool())
 	tools = append(tools, plistReadTool())
 
-	api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Generated %d per-item tools", len(tools)))
+	api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Generated %d per-item tools (search + generic action)", len(tools)))
 	return tools
 }

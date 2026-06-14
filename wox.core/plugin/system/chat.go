@@ -556,17 +556,14 @@ Every app, service, brew package, preference domain, and URL scheme has its own 
 Available tool categories:
 - System monitoring: disk, memory, CPU, battery, network, display, audio, Bluetooth, security
 - File operations, clipboard, shell, media, general utilities
-- Per-app: launch_<AppName>, open_<Scheme>
-- Per-service: service_start_<name>, service_stop_<name>, service_status_<name>
-- Per-agent: agent_start_<name>, agent_stop_<name>, agent_status_<name>
-- Per-brew: brew_upgrade_<pkg>
-- Per-preference: prefs_read_<domain>, prefs_write_<domain>
-- Shortcuts: run_shortcut_<Name>
-- App Intents: intent_<App>_<Intent>
+- Discover apps: search_apps — then use macos_launch_app or macos_app_info
+- Discover brew packages: search_brew — then use macos_brew_upgrade
+- Discover services/agents/daemons: search_services, search_agents, search_daemons — then use macos_service_start, macos_service_stop, macos_service_status
+- Discover preferences: search_prefs — then use macos_prefs_read, macos_prefs_write, plist_read
 - macOS built-in apps: calendar_*, reminders_*, mail_*, notes_*, contacts_*, messages_*, maps_*, music_*, safari_*
-- Accessibility / GUI automation: macos_ax_get_process_list, macos_ax_launch_app, macos_ax_focus_app, macos_ax_get_element, macos_ax_get_focused_element, macos_ax_get_window_elements, macos_ax_get_element_tree, macos_ax_click_element, macos_ax_set_text, macos_ax_get_text, macos_ax_show_menu, macos_ax_scroll
-- Finder/file management: macos_finder_list_windows, macos_finder_get_selection, macos_finder_select_file, macos_finder_new_folder, macos_finder_duplicate, macos_finder_compress, macos_finder_get_info, macos_finder_tag
-- Extra: macos_screenshot_capture, macos_screenshot_timed, macos_screenshot_capture_window, macos_notification_post, macos_terminal_run_command, macos_dictionary_lookup, macos_get_installed_apps, macos_icloud_drive_list, macos_facetime_call, macos_voicememos_list, macos_system_settings_open, macos_shortcuts_run, macos_siri_suggestions, macos_apple_intelligence_status
+- Accessibility / GUI automation: macos_ax_*
+- Finder/file management: macos_finder_*
+- Extra: macos_screenshot_*, macos_notification_post, macos_terminal_run_command, macos_dictionary_lookup, macos_get_installed_apps, macos_icloud_drive_list, macos_facetime_call, macos_voicememos_list, macos_system_settings_open, macos_shortcuts_run, macos_siri_suggestions, macos_apple_intelligence_status
 
 Always use tools to gather real data — never fabricate system information.`
 
