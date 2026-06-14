@@ -127,15 +127,14 @@ func axGetFocusedElementTool() common.MCPTool {
 	set frontApp to name of first process whose frontmost is true
 	tell process frontApp
 		set focusedEl to focused of window 1
-		if focusedEl is not missing value then
-			set role to ""
-			try
-				set role to (value of attribute "AXRole" of focusedEl) as text
-			end try
-			set desc to ""
-			try
-				set desc to description of focusedEl
-			end try
+		if focusedEl is not missing value then					set elRole to ""
+					try
+						set elRole to (value of attribute "AXRole" of focusedEl) as text
+					end try
+					set elDesc to ""
+					try
+						set elDesc to description of focusedEl
+					end try
 			set elValue to ""
 			try
 				set elValue to (value of focusedEl) as text
@@ -146,7 +145,7 @@ func axGetFocusedElementTool() common.MCPTool {
 			try
 				if enabled of focusedEl then set enabledStr to "yes"
 			end try
-			return "App: " & frontApp & return & "Role: " & role & return & "Description: " & desc & return & "Value: " & elValue & return & "Position: (" & elX & ", " & elY & ")" & return & "Size: " & elW & "x" & elH & return & "Enabled: " & enabledStr
+			return "App: " & frontApp & return & "Role: " & elRole & return & "Description: " & elDesc & return & "Value: " & elValue & return & "Position: (" & elX & ", " & elY & ")" & return & "Size: " & elW & "x" & elH & return & "Enabled: " & enabledStr
 		else
 			return "No focused element found in frontmost app: " & frontApp
 		end if
