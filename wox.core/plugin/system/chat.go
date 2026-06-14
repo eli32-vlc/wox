@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -37,14 +38,6 @@ type AIChatPlugin struct {
 	api             plugin.API
 
 	chatCancelFuncs *util.HashMap[string, context.CancelFunc] // chat id -> cancel func, used to stop ongoing chats
-
-	// Two-tier tool system: builtin + discovery hubs, with dynamic per-item tools
-	builtinTools        []common.MCPTool           // always-present tools (macOS + system)
-	discoveryTools      []common.MCPTool           // hub tools (may be retired on select)
-	retiredDiscovery    map[string]bool            // names of discovery tools retired by selection
-	dynamicTools        map[string][]common.MCPTool // selected item id -> generated tools
-	dynamicToolOrder    []string                   // LRU order, most recent at end
-	dynamicToolsMu      sync.RWMutex
 }
 
 func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
@@ -301,10 +294,6 @@ func (r *AIChatPlugin) Init(ctx context.Context, initParams plugin.InitParams) {
 	util.Go(ctx, "reload MCP servers", func() {
 		time.Sleep(time.Millisecond * 1000) // Wait for websocket server to be ready
 		r.reloadMCPServers(util.NewTraceContext())
-
-		// Run discovery startup scan after tools are loaded
-		time.Sleep(time.Millisecond * 2000) // Let MCP tools fully register
-		RunDiscoveryStartupScan(util.NewTraceContext())
 	})
 }
 
@@ -314,8 +303,8 @@ func (r *AIChatPlugin) IsAutoFocusToChatInputWhenOpenWithQueryHotkey(ctx context
 }
 
 func (r *AIChatPlugin) RefreshDiscoveryCache(ctx context.Context) {
-	discoveryCache.Clear()
-	RunDiscoveryStartupScan(ctx)
+	refreshPerItemTools(ctx)
+	r.reloadMCPServers(ctx)
 }
 
 func (r *AIChatPlugin) QueryFallback(ctx context.Context, query plugin.Query) []plugin.QueryResult {
@@ -377,121 +366,21 @@ func (r *AIChatPlugin) reloadMCPServers(ctx context.Context) {
 		}
 	}
 
-	// Load always-present built-in tools (macOS + system)
+	// Load built-in tools (macOS + system)
 	macosTools := GetMacOSTools()
 	systemTools := GetSystemTools()
-	r.builtinTools = append([]common.MCPTool{}, macosTools...)
-	r.builtinTools = append(r.builtinTools, systemTools...)
+	builtinTools := append([]common.MCPTool{}, macosTools...)
+	builtinTools = append(builtinTools, systemTools...)
 
-	// Load hub discovery tools with dynamic tool registration
-	r.discoveryTools = GetDiscoveryTools(r.dynamicToolRegistrar())
+	// Load per-item tools (apps, brew, services, agents, prefs, schemes)
+	perItemTools := GetPerItemTools(ctx, r.api)
 
-	r.dynamicToolsMu.Lock()
-	r.retiredDiscovery = make(map[string]bool)
-	r.dynamicTools = make(map[string][]common.MCPTool)
-	r.dynamicToolOrder = nil
-	r.dynamicToolsMu.Unlock()
-
-	// mcpToolsMap kept for backward compat — all available tools
-	mcpTools = append(mcpTools, r.builtinTools...)
-	for _, dt := range r.discoveryTools {
-		mcpTools = append(mcpTools, dt)
-	}
+	// Compose all tool tiers
+	mcpTools = append(mcpTools, builtinTools...)
+	mcpTools = append(mcpTools, perItemTools...)
 	r.mcpToolsMap = mcpTools
 
 	plugin.GetPluginManager().GetUI().ReloadChatResources(ctx, "tools")
-}
-
-func (r *AIChatPlugin) dynamicToolRegistrar() common.DynamicToolRegistrar {
-	return common.DynamicToolRegistrar{
-		Register:   r.registerDynamicTools,
-		Unregister: r.unregisterDynamicTools,
-		RetireDiscovery: func(ctx context.Context, toolName string) {
-			r.dynamicToolsMu.Lock()
-			r.retiredDiscovery[toolName] = true
-			r.dynamicToolsMu.Unlock()
-		},
-	}
-}
-
-func (r *AIChatPlugin) registerDynamicTools(ctx context.Context, itemId string, tools []common.MCPTool) {
-	r.dynamicToolsMu.Lock()
-	defer r.dynamicToolsMu.Unlock()
-	r.dynamicTools[itemId] = tools
-
-	for i, id := range r.dynamicToolOrder {
-		if id == itemId {
-			r.dynamicToolOrder = append(r.dynamicToolOrder[:i], r.dynamicToolOrder[i+1:]...)
-			break
-		}
-	}
-	r.dynamicToolOrder = append(r.dynamicToolOrder, itemId)
-	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Registered %d dynamic tools for item %s", len(tools), itemId))
-}
-
-func (r *AIChatPlugin) unregisterDynamicTools(ctx context.Context, itemId string) {
-	r.dynamicToolsMu.Lock()
-	defer r.dynamicToolsMu.Unlock()
-	if itemId == "*" {
-		r.dynamicTools = make(map[string][]common.MCPTool)
-		r.dynamicToolOrder = nil
-		r.retiredDiscovery = make(map[string]bool)
-		r.api.Log(ctx, plugin.LogLevelInfo, "AI: Unregistered ALL dynamic tools and reset discovery")
-		return
-	}
-	delete(r.dynamicTools, itemId)
-	for i, id := range r.dynamicToolOrder {
-		if id == itemId {
-			r.dynamicToolOrder = append(r.dynamicToolOrder[:i], r.dynamicToolOrder[i+1:]...)
-			break
-		}
-	}
-	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Unregistered dynamic tools for item %s", itemId))
-}
-
-func (r *AIChatPlugin) getActiveTools(ctx context.Context) []common.MCPTool {
-	r.dynamicToolsMu.RLock()
-	defer r.dynamicToolsMu.RUnlock()
-
-	// Start with always-present builtin tools
-	tools := make([]common.MCPTool, len(r.builtinTools))
-	copy(tools, r.builtinTools)
-
-	// Add non-retired discovery hub tools
-	for _, dt := range r.discoveryTools {
-		if !r.retiredDiscovery[dt.Name] {
-			tools = append(tools, dt)
-		}
-	}
-
-	// Calculate how many dynamic tools fit within provider cap
-	providerCap := getProviderToolCap()
-	remaining := providerCap - len(tools)
-	if remaining <= 0 {
-		return tools
-	}
-
-	// Add dynamic tools newest-first, up to capacity
-	for i := len(r.dynamicToolOrder) - 1; i >= 0 && remaining > 0; i-- {
-		itemId := r.dynamicToolOrder[i]
-		dynTools, ok := r.dynamicTools[itemId]
-		if !ok {
-			continue
-		}
-		if len(dynTools) <= remaining {
-			tools = append(tools, dynTools...)
-			remaining -= len(dynTools)
-		} else {
-			tools = append(tools, dynTools[:remaining]...)
-			remaining = 0
-		}
-	}
-
-	return tools
-}
-
-func getProviderToolCap() int {
-	return 200
 }
 
 func (r *AIChatPlugin) loadMCPServers(ctx context.Context) ([]common.AIChatMCPServerConfig, error) {
@@ -643,36 +532,24 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 		// Add default system prompt if no agent prompt was set
 		if !hasAgentPrompt {
 			defaultPrompt := common.Conversation{
-				Id:        uuid.NewString(),
-				Role:      common.ConversationRoleSystem,
-				Text:      `You are a macOS AI assistant with a two-tier tool system.
+				Id:   uuid.NewString(),
+				Role: common.ConversationRoleSystem,
+				Text: `You are a macOS assistant. Answer concisely — 1-3 sentences. Use tools to get real data instead of guessing.
 
-TIER 1 — ALWAYS AVAILABLE (~100 tools): System monitoring (disk, memory, CPU, battery, network, display, audio, Bluetooth, security), file operations, clipboard, shell, media, and general utilities.
+Every app, service, brew package, preference domain, and URL scheme has its own individual tool. Use search tools (search_apps, search_services, search_agents, search_brew, search_prefs, search_url_schemes) to discover what's available, then call the specific tool by name.
 
-TIER 2 — DYNAMIC HUB TOOLS (9 discovery tools): These let you find and interact with specific system resources. Each one supports an optional "select" parameter that generates per-item control tools:
+Available tool categories:
+- System monitoring: disk, memory, CPU, battery, network, display, audio, Bluetooth, security
+- File operations, clipboard, shell, media, general utilities
+- Per-app: launch_<AppName>, open_<Scheme>
+- Per-service: service_start_<name>, service_stop_<name>, service_status_<name>
+- Per-agent: agent_start_<name>, agent_stop_<name>, agent_status_<name>
+- Per-brew: brew_upgrade_<pkg>
+- Per-preference: prefs_read_<domain>, prefs_write_<domain>
+- Shortcuts: run_shortcut_<Name>
+- App Intents: intent_<App>_<Intent>
 
-- macos_search_apps — Find installed apps. Pass select=bundleId to get launch, URL open, and info tools for that app.
-- macos_search_url_schemes — Find apps that handle URL schemes. Pass select=scheme to get an open tool.
-- macos_search_services — Find launchd daemons. Pass select=name to get start/stop/status tools.
-- macos_search_agents — Find launch agents. Pass select=name to get start/stop/status tools.
-- macos_search_preferences — Find preference domains. Pass select=domain to get read/write tools.
-- macos_search_homebrew — Find Homebrew packages. Pass select=name to get upgrade tools.
-- macos_search_daemons — Find system daemons. Pass select=name to get start/stop/status tools.
-- macos_search_file_types — Find apps for a file extension. Pass select=bundleId to get tools.
-- macos_search_extensions — Find app extensions. (Coming soon.)
-
-WORKFLOW:
-1. Use a hub tool to search (e.g., macos_search_apps)
-2. When you find the item, call the same hub tool with its "select" parameter
-3. Control tools for that item become available in subsequent turns
-4. Each selection replaces the hub tool with 2-5 control tools
-
-CRITICAL RULES:
-- ALWAYS use tools to gather real data — never guess or fabricate system information. Every system query must start with a tool call.
-- When the user asks about their system status, files, apps, or settings, call the relevant tool first, then respond with the actual results.
-- Be concise and accurate. Report raw tool output in a readable format.
-- If a tool call fails, explain why and try an alternative approach or tool.
-- If you need to control an app or service you haven't selected yet, use the relevant hub tool with "select".`,
+Always use tools to gather real data — never fabricate system information.`,
 				Timestamp: util.GetSystemTimestamp(),
 			}
 			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)
@@ -688,7 +565,7 @@ CRITICAL RULES:
 			return lo.Contains(aiChatData.Tools, tool.Name)
 		})
 	} else {
-		tools = r.getActiveTools(ctx)
+		tools = r.mcpToolsMap
 	}
 
 	// Store cancel func so the chat can be stopped via /ai/chat/stop
@@ -713,10 +590,14 @@ CRITICAL RULES:
 		}
 		if len(streamResult.ToolCalls) > 0 {
 			for _, toolCall := range streamResult.ToolCalls {
+				toolText := toolCall.Delta
+				if toolCall.Status == common.ToolCallStatusSucceeded || toolCall.Status == common.ToolCallStatusFailed {
+					toolText = toolCall.Response
+				}
 				r.appendOrUpdateConversation(&aiChatData, common.Conversation{
 					Id:           toolCall.Id,
 					Role:         common.ConversationRoleTool,
-					Text:         toolCall.Delta,
+					Text:         toolText,
 					ToolCallInfo: toolCall,
 					Timestamp:    toolCall.StartTimestamp,
 				})
@@ -729,9 +610,6 @@ CRITICAL RULES:
 			r.appendOrUpdateChatData(aiChatData)
 			r.saveChats(ctx)
 
-			// Clean up the cancel func when chat finishes
-			r.chatCancelFuncs.Delete(aiChatData.Id)
-
 			// only summarize the chat title if there is no tool call
 			// if there is any toolcall, we need to wait for the tool call to finish
 			if len(streamResult.ToolCalls) == 0 {
@@ -741,15 +619,47 @@ CRITICAL RULES:
 			if streamResult.IsAllToolCallsSucceeded() {
 				// recursively call the chat to continue
 				r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: recursively calling the chat to continue, loop: %d", chatLoopCount+1))
+				r.chatCancelFuncs.Delete(aiChatData.Id)
 				r.Chat(ctx, aiChatData, chatLoopCount+1)
+			} else {
+				r.chatCancelFuncs.Delete(aiChatData.Id)
 			}
+		}
+		if streamResult.Status == common.ChatStreamStatusError {
+			r.chatCancelFuncs.Delete(aiChatData.Id)
+			if errors.Is(chatCtx.Err(), context.Canceled) {
+				r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Chat stopped by user: %s", aiChatData.Id))
+				r.appendOrUpdateChatData(aiChatData)
+				r.saveChats(ctx)
+				plugin.GetPluginManager().GetUI().SendChatResponse(ctx, aiChatData)
+				return
+			}
+
+			r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to chat: %s", streamResult.Data))
+			r.appendOrUpdateConversation(&aiChatData, common.Conversation{
+				Id:        uuid.NewString(),
+				Role:      common.ConversationRoleAssistant,
+				Text:      fmt.Sprintf(r.api.GetTranslation(ctx, "ui_ai_chat_error"), streamResult.Data),
+				Timestamp: util.GetSystemTimestamp(),
+			})
+			plugin.GetPluginManager().GetUI().SendChatResponse(ctx, aiChatData)
+			r.appendOrUpdateChatData(aiChatData)
+			r.saveChats(ctx)
+			r.api.Notify(ctx, r.api.GetTranslation(ctx, "ui_ai_chat_failed_to_chat"))
 		}
 	})
 
-	// Clean up cancel func when stream finishes (success or error)
-	r.chatCancelFuncs.Delete(aiChatData.Id)
-
 	if chatErr != nil {
+		r.chatCancelFuncs.Delete(aiChatData.Id)
+
+		if errors.Is(chatErr, context.Canceled) {
+			r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Chat stopped by user: %s", aiChatData.Id))
+			r.appendOrUpdateChatData(aiChatData)
+			r.saveChats(ctx)
+			plugin.GetPluginManager().GetUI().SendChatResponse(ctx, aiChatData)
+			return
+		}
+
 		r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to chat: %s", chatErr.Error()))
 		r.appendOrUpdateConversation(&aiChatData, common.Conversation{
 			Id:        uuid.NewString(),
@@ -991,6 +901,7 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 				return
 			}
 
+			chat.Title = title
 			r.chatsMu.Lock()
 			for i := range r.chats {
 				if r.chats[i].Id == chat.Id {
@@ -1000,6 +911,8 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 			}
 			r.chatsMu.Unlock()
 			r.saveChats(ctx)
+
+			plugin.GetPluginManager().GetUI().SendChatResponse(ctx, chat)
 
 			if resultId, ok := r.resultChatIdMap.Load(chat.Id); ok {
 				plugin.GetPluginManager().GetUI().UpdateResult(ctx, plugin.UpdatableResult{

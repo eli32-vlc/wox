@@ -193,12 +193,6 @@ func (t *MCPTool) Key() string {
 	return fmt.Sprintf("%s:%s", t.ServerConfig.Name, t.Name)
 }
 
-type DynamicToolRegistrar struct {
-	Register        func(ctx context.Context, itemId string, tools []MCPTool)
-	Unregister      func(ctx context.Context, itemId string)
-	RetireDiscovery func(ctx context.Context, toolName string)
-}
-
 type AIChatMCPServerConfig struct {
 	Name     string
 	Type     AIChatMCPServerType

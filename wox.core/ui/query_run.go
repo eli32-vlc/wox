@@ -162,13 +162,9 @@ func (r *queryRun) addResponse(response plugin.QueryResponseUI) {
 		tracker.Log(r.ctx)
 	}
 
-	// In AI-only mode, filter out all results except from the AI chat plugin
-	// PluginId is empty for global queries so we only check when it's set
-	if plugin.IsAIOnlyMode() && len(response.Results) > 0 && response.Context.PluginId != "" {
-		if response.Context.PluginId != "a9cfd85a-6e53-415c-9d44-68777aa6323d" {
-			logger.Info(r.ctx, fmt.Sprintf("ai-only mode: discarding %d results from non-chat plugin", len(response.Results)))
-			return
-		}
+	if plugin.IsAIOnlyMode() && len(response.Results) > 0 && response.Context.PluginId != "a9cfd85a-6e53-415c-9d44-68777aa6323d" {
+		logger.Info(r.ctx, fmt.Sprintf("ai-only mode: discarding %d results from non-chat plugin", len(response.Results)))
+		return
 	}
 
 	// QueryContext is backend-owned and remains valid for both global and plugin

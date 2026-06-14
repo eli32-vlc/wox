@@ -660,7 +660,24 @@ class WoxAIChatController extends GetxController {
       }
     }
 
-    // Check if AI generation is done (last conversation is from assistant and has text)
+    // Keep generating if any tool call is still running/pending/streaming
+    bool hasActiveToolCalls = false;
+    for (final conv in data.conversations) {
+      if (conv.role == WoxAIChatConversationRoleEnum.WOX_AIChat_CONVERSATION_ROLE_TOOL.value) {
+        if (conv.toolCallInfo.status == ToolCallStatus.running ||
+            conv.toolCallInfo.status == ToolCallStatus.pending ||
+            conv.toolCallInfo.status == ToolCallStatus.streaming) {
+          hasActiveToolCalls = true;
+          break;
+        }
+      }
+    }
+    if (hasActiveToolCalls) {
+      isGenerating.value = true;
+      return;
+    }
+
+    // No active tool calls — check if the last assistant message signals completion
     final conversations = data.conversations;
     if (conversations.isNotEmpty) {
       final lastConv = conversations.last;

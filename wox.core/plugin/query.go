@@ -176,7 +176,7 @@ type QueryContext struct {
 // so the response carries the resolved global/plugin classification back.
 func BuildQueryContext(query Query, queryPlugin *Instance) QueryContext {
 	queryContext := QueryContext{IsGlobalQuery: query.IsGlobalQuery()}
-	if !queryContext.IsGlobalQuery && queryPlugin != nil {
+	if queryPlugin != nil {
 		queryContext.PluginId = queryPlugin.Metadata.Id
 	}
 	return queryContext

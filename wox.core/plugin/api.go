@@ -523,18 +523,26 @@ func (a *APIImpl) AIChatStream(ctx context.Context, model common.Model, conversa
 						}
 					}
 
-					sw.Wait()
+				sw.Wait()
 
-					anyToolCallFailed := lo.SomeBy(streamResult.ToolCalls, func(toolCall common.ToolCallInfo) bool {
-						return toolCall.Status == common.ToolCallStatusFailed
-					})
-					if anyToolCallFailed {
-						streamResult.Status = common.ChatStreamStatusError
-						callback(streamResult)
-					} else {
-						streamResult.Status = common.ChatStreamStatusFinished
-						callback(streamResult)
-					}
+				if ctx.Err() != nil {
+					util.GetLogger().Info(ctx, "AI: tool execution interrupted by context cancellation")
+					streamResult.Status = common.ChatStreamStatusError
+					streamResult.Data = ctx.Err().Error()
+					callback(streamResult)
+					return
+				}
+
+				anyToolCallFailed := lo.SomeBy(streamResult.ToolCalls, func(toolCall common.ToolCallInfo) bool {
+					return toolCall.Status == common.ToolCallStatusFailed
+				})
+				if anyToolCallFailed {
+					streamResult.Status = common.ChatStreamStatusError
+					callback(streamResult)
+				} else {
+					streamResult.Status = common.ChatStreamStatusFinished
+					callback(streamResult)
+				}
 					return
 				}
 			}
