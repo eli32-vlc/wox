@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"wox/ai"
 	"wox/common"
@@ -28,6 +29,7 @@ func init() {
 
 type AIChatPlugin struct {
 	chats           []common.AIChatData
+	chatsMu         sync.RWMutex
 	agents          []common.AIAgent
 	resultChatIdMap *util.HashMap[string /*chat id*/, string /*result id*/] // map of result id and chat id, used to update the chat title
 	mcpServers      []common.AIChatMCPServerConfig
@@ -35,6 +37,14 @@ type AIChatPlugin struct {
 	api             plugin.API
 
 	chatCancelFuncs *util.HashMap[string, context.CancelFunc] // chat id -> cancel func, used to stop ongoing chats
+
+	// Two-tier tool system: builtin + discovery hubs, with dynamic per-item tools
+	builtinTools        []common.MCPTool           // always-present tools (macOS + system)
+	discoveryTools      []common.MCPTool           // hub tools (may be retired on select)
+	retiredDiscovery    map[string]bool            // names of discovery tools retired by selection
+	dynamicTools        map[string][]common.MCPTool // selected item id -> generated tools
+	dynamicToolOrder    []string                   // LRU order, most recent at end
+	dynamicToolsMu      sync.RWMutex
 }
 
 func (r *AIChatPlugin) GetMetadata() plugin.Metadata {
@@ -367,21 +377,121 @@ func (r *AIChatPlugin) reloadMCPServers(ctx context.Context) {
 		}
 	}
 
-	// Load built-in macOS system tools
+	// Load always-present built-in tools (macOS + system)
 	macosTools := GetMacOSTools()
-	mcpTools = append(mcpTools, macosTools...)
-
-	// Load auto-discovery tools
-	discoveryTools := GetDiscoveryTools()
-	mcpTools = append(mcpTools, discoveryTools...)
-
-	// Load system plugin tools (wraps all system plugins as MCP tools)
 	systemTools := GetSystemTools()
-	mcpTools = append(mcpTools, systemTools...)
+	r.builtinTools = append([]common.MCPTool{}, macosTools...)
+	r.builtinTools = append(r.builtinTools, systemTools...)
 
+	// Load hub discovery tools with dynamic tool registration
+	r.discoveryTools = GetDiscoveryTools(r.dynamicToolRegistrar())
+
+	r.dynamicToolsMu.Lock()
+	r.retiredDiscovery = make(map[string]bool)
+	r.dynamicTools = make(map[string][]common.MCPTool)
+	r.dynamicToolOrder = nil
+	r.dynamicToolsMu.Unlock()
+
+	// mcpToolsMap kept for backward compat — all available tools
+	mcpTools = append(mcpTools, r.builtinTools...)
+	for _, dt := range r.discoveryTools {
+		mcpTools = append(mcpTools, dt)
+	}
 	r.mcpToolsMap = mcpTools
 
 	plugin.GetPluginManager().GetUI().ReloadChatResources(ctx, "tools")
+}
+
+func (r *AIChatPlugin) dynamicToolRegistrar() common.DynamicToolRegistrar {
+	return common.DynamicToolRegistrar{
+		Register:   r.registerDynamicTools,
+		Unregister: r.unregisterDynamicTools,
+		RetireDiscovery: func(ctx context.Context, toolName string) {
+			r.dynamicToolsMu.Lock()
+			r.retiredDiscovery[toolName] = true
+			r.dynamicToolsMu.Unlock()
+		},
+	}
+}
+
+func (r *AIChatPlugin) registerDynamicTools(ctx context.Context, itemId string, tools []common.MCPTool) {
+	r.dynamicToolsMu.Lock()
+	defer r.dynamicToolsMu.Unlock()
+	r.dynamicTools[itemId] = tools
+
+	for i, id := range r.dynamicToolOrder {
+		if id == itemId {
+			r.dynamicToolOrder = append(r.dynamicToolOrder[:i], r.dynamicToolOrder[i+1:]...)
+			break
+		}
+	}
+	r.dynamicToolOrder = append(r.dynamicToolOrder, itemId)
+	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Registered %d dynamic tools for item %s", len(tools), itemId))
+}
+
+func (r *AIChatPlugin) unregisterDynamicTools(ctx context.Context, itemId string) {
+	r.dynamicToolsMu.Lock()
+	defer r.dynamicToolsMu.Unlock()
+	if itemId == "*" {
+		r.dynamicTools = make(map[string][]common.MCPTool)
+		r.dynamicToolOrder = nil
+		r.retiredDiscovery = make(map[string]bool)
+		r.api.Log(ctx, plugin.LogLevelInfo, "AI: Unregistered ALL dynamic tools and reset discovery")
+		return
+	}
+	delete(r.dynamicTools, itemId)
+	for i, id := range r.dynamicToolOrder {
+		if id == itemId {
+			r.dynamicToolOrder = append(r.dynamicToolOrder[:i], r.dynamicToolOrder[i+1:]...)
+			break
+		}
+	}
+	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Unregistered dynamic tools for item %s", itemId))
+}
+
+func (r *AIChatPlugin) getActiveTools(ctx context.Context) []common.MCPTool {
+	r.dynamicToolsMu.RLock()
+	defer r.dynamicToolsMu.RUnlock()
+
+	// Start with always-present builtin tools
+	tools := make([]common.MCPTool, len(r.builtinTools))
+	copy(tools, r.builtinTools)
+
+	// Add non-retired discovery hub tools
+	for _, dt := range r.discoveryTools {
+		if !r.retiredDiscovery[dt.Name] {
+			tools = append(tools, dt)
+		}
+	}
+
+	// Calculate how many dynamic tools fit within provider cap
+	providerCap := getProviderToolCap()
+	remaining := providerCap - len(tools)
+	if remaining <= 0 {
+		return tools
+	}
+
+	// Add dynamic tools newest-first, up to capacity
+	for i := len(r.dynamicToolOrder) - 1; i >= 0 && remaining > 0; i-- {
+		itemId := r.dynamicToolOrder[i]
+		dynTools, ok := r.dynamicTools[itemId]
+		if !ok {
+			continue
+		}
+		if len(dynTools) <= remaining {
+			tools = append(tools, dynTools...)
+			remaining -= len(dynTools)
+		} else {
+			tools = append(tools, dynTools[:remaining]...)
+			remaining = 0
+		}
+	}
+
+	return tools
+}
+
+func getProviderToolCap() int {
+	return 200
 }
 
 func (r *AIChatPlugin) loadMCPServers(ctx context.Context) ([]common.AIChatMCPServerConfig, error) {
@@ -419,7 +529,9 @@ func (r *AIChatPlugin) loadChats(ctx context.Context) ([]common.AIChatData, erro
 }
 
 func (r *AIChatPlugin) saveChats(ctx context.Context) {
+	r.chatsMu.RLock()
 	chatsJson, err := json.Marshal(r.chats)
+	r.chatsMu.RUnlock()
 	if err != nil {
 		r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to marshal chats: %s", err.Error()))
 		return
@@ -533,19 +645,34 @@ func (r *AIChatPlugin) Chat(ctx context.Context, aiChatData common.AIChatData, c
 			defaultPrompt := common.Conversation{
 				Id:        uuid.NewString(),
 				Role:      common.ConversationRoleSystem,
-				Text:      `You are a macOS AI assistant with access to 90+ system tools organized into three categories:
+				Text:      `You are a macOS AI assistant with a two-tier tool system.
 
-1. macOS system tools (~52 tools): disk/memory/CPU/battery/network/display/audio/bluetooth/firewall/locale/keyboard/timezone info, file search, trash management, dark mode, screensaver, and more.
-2. System plugin tools (~37 tools): launch/kill/list apps, read/write clipboard, calculate, shell commands, emoji search, screenshot, browse directories, open URLs, manage windows, media playback, and more.
-3. User-configured MCP servers.
+TIER 1 — ALWAYS AVAILABLE (~100 tools): System monitoring (disk, memory, CPU, battery, network, display, audio, Bluetooth, security), file operations, clipboard, shell, media, and general utilities.
+
+TIER 2 — DYNAMIC HUB TOOLS (9 discovery tools): These let you find and interact with specific system resources. Each one supports an optional "select" parameter that generates per-item control tools:
+
+- macos_search_apps — Find installed apps. Pass select=bundleId to get launch, URL open, and info tools for that app.
+- macos_search_url_schemes — Find apps that handle URL schemes. Pass select=scheme to get an open tool.
+- macos_search_services — Find launchd daemons. Pass select=name to get start/stop/status tools.
+- macos_search_agents — Find launch agents. Pass select=name to get start/stop/status tools.
+- macos_search_preferences — Find preference domains. Pass select=domain to get read/write tools.
+- macos_search_homebrew — Find Homebrew packages. Pass select=name to get upgrade tools.
+- macos_search_daemons — Find system daemons. Pass select=name to get start/stop/status tools.
+- macos_search_file_types — Find apps for a file extension. Pass select=bundleId to get tools.
+- macos_search_extensions — Find app extensions. (Coming soon.)
+
+WORKFLOW:
+1. Use a hub tool to search (e.g., macos_search_apps)
+2. When you find the item, call the same hub tool with its "select" parameter
+3. Control tools for that item become available in subsequent turns
+4. Each selection replaces the hub tool with 2-5 control tools
 
 CRITICAL RULES:
 - ALWAYS use tools to gather real data — never guess or fabricate system information. Every system query must start with a tool call.
 - When the user asks about their system status, files, apps, or settings, call the relevant tool first, then respond with the actual results.
-- You can check: disk usage, memory, CPU, battery, Wi-Fi SSID/signal, IP address, display resolution, brightness, audio volume/output devices/mute, running processes, installed apps via Spotlight, clipboard content, frontmost app, network connections, and much more.
 - Be concise and accurate. Report raw tool output in a readable format.
 - If a tool call fails, explain why and try an alternative approach or tool.
-- For unknown queries, explain what you can do with your available tools.`,
+- If you need to control an app or service you haven't selected yet, use the relevant hub tool with "select".`,
 				Timestamp: util.GetSystemTimestamp(),
 			}
 			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)
@@ -561,7 +688,7 @@ CRITICAL RULES:
 			return lo.Contains(aiChatData.Tools, tool.Name)
 		})
 	} else {
-		tools = r.mcpToolsMap
+		tools = r.getActiveTools(ctx)
 	}
 
 	// Store cancel func so the chat can be stopped via /ai/chat/stop
@@ -663,6 +790,8 @@ func (r *AIChatPlugin) appendOrUpdateConversation(aiChatData *common.AIChatData,
 }
 
 func (r *AIChatPlugin) appendOrUpdateChatData(aiChatData common.AIChatData) {
+	r.chatsMu.Lock()
+	defer r.chatsMu.Unlock()
 	for i := range r.chats {
 		if r.chats[i].Id == aiChatData.Id {
 			r.chats[i] = aiChatData
@@ -826,7 +955,6 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 	r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Summarizing chat: %s", chat.Id))
 
 	var conversations []common.Conversation
-	// skip tool conversations
 	conversations = lo.Filter(chat.Conversations, func(conversation common.Conversation, _ int) bool {
 		return conversation.Role != common.ConversationRoleTool
 	})
@@ -834,31 +962,43 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 		Id:   uuid.NewString(),
 		Role: common.ConversationRoleUser,
 		Text: `Please summarize our conversation above and provide a clear and concise title. Requirements:
-		1. The title should be no more than 10 characters.
-		2. The language of the title should be the same as the language of the conversation.
-		3. The title should be a single sentence.
-		4. The response should be only the title, no other text.
+1. The title should be no more than 50 characters.
+2. The language of the title should be the same as the language of the conversation.
+3. The title should be a single sentence.
+4. The response should be only the title, no other text.
 `,
 		Images:    []common.WoxImage{},
 		Timestamp: util.GetSystemTimestamp(),
 	})
 
-	r.api.AIChatStream(ctx, chat.Model, conversations, common.EmptyChatOptions, func(streamResult common.ChatStreamData) {
+	summarizeErr := r.api.AIChatStream(ctx, chat.Model, conversations, common.EmptyChatOptions, func(streamResult common.ChatStreamData) {
 		r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: chat summarize stream data: %s", streamResult.Data))
+
+		if streamResult.Status == common.ChatStreamStatusError {
+			r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: chat summarize stream error: %s", streamResult.Data))
+			return
+		}
+
 		if streamResult.Status == common.ChatStreamStatusFinished {
-			// Use Data directly since Reasoning is now separated
-			title := streamResult.Data
+			title := strings.TrimSpace(streamResult.Data)
 			title = strings.ReplaceAll(title, "\n", "")
+			title = strings.TrimPrefix(title, "\"")
+			title = strings.TrimSuffix(title, "\"")
 
 			r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: Summarized chat title: %s", title))
 
-			// update the chat title
+			if title == "" {
+				return
+			}
+
+			r.chatsMu.Lock()
 			for i := range r.chats {
 				if r.chats[i].Id == chat.Id {
 					r.chats[i].Title = title
 					break
 				}
 			}
+			r.chatsMu.Unlock()
 			r.saveChats(ctx)
 
 			if resultId, ok := r.resultChatIdMap.Load(chat.Id); ok {
@@ -869,6 +1009,10 @@ func (r *AIChatPlugin) summarizeChat(ctx context.Context, chat common.AIChatData
 			}
 		}
 	})
+
+	if summarizeErr != nil {
+		r.api.Log(ctx, plugin.LogLevelError, fmt.Sprintf("AI: Failed to summarize chat: %s", summarizeErr.Error()))
+	}
 }
 
 func (r *AIChatPlugin) StopChat(ctx context.Context, chatId string) bool {

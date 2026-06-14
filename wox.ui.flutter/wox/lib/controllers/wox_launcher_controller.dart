@@ -129,9 +129,7 @@ class WoxLauncherController extends GetxController {
   // newly visible query box. This token scopes each visible-launcher focus
   // sequence so stale retries from an older show/hide cycle cannot touch input.
   int _visibleLauncherFocusToken = 0;
-  final queryBoxScrollController = ScrollController(initialScrollOffset: 0.0);
-  // Stores the current editable text width so query box height can follow visual wrapping.
-  double queryBoxTextWrapWidth = 0;
+
   final queryBoxLineCount = 1.obs;
   final queryBoxTextFieldKey = GlobalKey<ExtendedTextFieldState>();
   // Bug fix: Linux can sometimes surface Enter only as KeyRepeatEvent after the platform/IME
@@ -2654,7 +2652,6 @@ class WoxLauncherController extends GetxController {
   void onQueryBoxTextChanged(String value) {
     // Suppress plugin queries when AI chat is the active view — text goes to AI on Enter
     if (isShowPreviewPanel.value && currentPreview.value.previewType == WoxPreviewTypeEnum.WOX_PREVIEW_TYPE_CHAT.code) {
-      _scrollQueryBoxToCaret();
       return;
     }
 
@@ -2664,7 +2661,6 @@ class WoxLauncherController extends GetxController {
     resultGridViewController.isMouseMoved = false;
 
     if (currentQuery.value.queryType == WoxQueryTypeEnum.WOX_QUERY_TYPE_SELECTION.code) {
-      updateQueryBoxLineCount(traceId, value);
       // do local filter if query type is selection
       resultListViewController.filterItems(traceId, value);
       resultGridViewController.filterItems(traceId, value);
@@ -2691,14 +2687,6 @@ class WoxLauncherController extends GetxController {
         preserveCompletionHint: skipCompletionHint,
       );
     }
-  }
-
-  void _scrollQueryBoxToCaret() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (queryBoxScrollController.hasClients) {
-        queryBoxScrollController.jumpTo(queryBoxScrollController.position.maxScrollExtent);
-      }
-    });
   }
 
   Future<void> queryMRU(String traceId) async {
@@ -2801,7 +2789,6 @@ class WoxLauncherController extends GetxController {
     if (moveCursorToEnd) {
       moveQueryBoxCursorToEnd();
     }
-    updateQueryBoxLineCount(traceId, query.queryText);
 
     // Cancel previous loading timer and reset loading state
     loadingTimer?.cancel();
@@ -3821,58 +3808,13 @@ class WoxLauncherController extends GetxController {
     }
   }
 
-  void updateQueryBoxTextWrapWidth(String traceId, double width) {
-    if ((queryBoxTextWrapWidth - width).abs() < 1) {
-      return;
-    }
-
-    queryBoxTextWrapWidth = width;
-    updateQueryBoxLineCount(traceId, queryBoxTextFieldController.text);
-  }
-
-  int calculateQueryBoxLineCount(String text) {
-    final normalizedText = text.replaceAll('\r\n', '\n');
-    if (queryBoxTextWrapWidth <= 0) {
-      return normalizedText.isEmpty ? 1 : normalizedText.split('\n').length.clamp(1, QUERY_BOX_MAX_LINES).toInt();
-    }
-
-    final metrics = WoxInterfaceSizeUtil.instance.current;
-    final painter = TextPainter(
-      text: TextSpan(text: normalizedText.isEmpty ? ' ' : normalizedText, style: TextStyle(fontSize: metrics.queryBoxFontSize)),
-      textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
-    )..layout(minWidth: 0, maxWidth: queryBoxTextWrapWidth);
-
-    // Query text can wrap visually even when it has no explicit newline. The previous explicit-newline
-    // count kept the window one line tall, so wrapped content and the caret could move outside the
-    // visible input area. Measuring the actual layout preserves pasted multi-line text and lets long
-    // single-line queries expand up to the existing query box limit.
-    final lineCount = painter.computeLineMetrics().length.clamp(1, QUERY_BOX_MAX_LINES).toInt();
-    painter.dispose();
-    return lineCount;
-  }
-
-  void updateQueryBoxLineCount(String traceId, String text) {
-    final rawLineCount = calculateQueryBoxLineCount(text);
-    final clampedLineCount = rawLineCount.clamp(1, QUERY_BOX_MAX_LINES);
-    if (queryBoxLineCount.value == clampedLineCount) {
-      return;
-    }
-    queryBoxLineCount.value = clampedLineCount;
-    resizeHeight(traceId: traceId, reason: "query box line count changed");
-  }
-
   double getQueryBoxInputHeight() {
-    final extraLines = queryBoxLineCount.value - 1;
     final metrics = WoxInterfaceSizeUtil.instance.current;
-    // Density changes the query-box content height, so multi-line expansion must
-    // derive from the current metrics instead of the old normal-only constant.
-    return metrics.queryBoxBaseHeight + (metrics.queryBoxLineHeight * extraLines);
+    return metrics.queryBoxBaseHeight;
   }
 
   double getQueryBoxTotalHeight() {
-    final extraLines = queryBoxLineCount.value - 1;
-    return WoxThemeUtil.instance.getQueryBoxHeight() + (WoxInterfaceSizeUtil.instance.current.queryBoxLineHeight * extraLines);
+    return WoxThemeUtil.instance.getQueryBoxHeight();
   }
 
   void clearHoveredResult() {
@@ -4379,16 +4321,10 @@ class WoxLauncherController extends GetxController {
 
   void moveQueryBoxCursorToStart() {
     queryBoxTextFieldController.selection = TextSelection.fromPosition(const TextPosition(offset: 0));
-    if (queryBoxScrollController.hasClients) {
-      queryBoxScrollController.jumpTo(0);
-    }
   }
 
   void moveQueryBoxCursorToEnd() {
     queryBoxTextFieldController.selection = TextSelection.collapsed(offset: queryBoxTextFieldController.text.length);
-    if (queryBoxScrollController.hasClients) {
-      queryBoxScrollController.jumpTo(queryBoxScrollController.position.maxScrollExtent);
-    }
   }
 
   void handleQueryBoxArrowUp() {

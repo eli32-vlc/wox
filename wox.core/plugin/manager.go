@@ -3681,6 +3681,9 @@ func (m *Manager) QuerySilent(ctx context.Context, query Query) bool {
 }
 
 func (m *Manager) QueryFallback(ctx context.Context, query Query, queryPlugin *Instance) (response QueryResponseUI) {
+	if IsAIOnlyMode() {
+		return response
+	}
 	response.Context = BuildQueryContext(query, queryPlugin)
 	if queryPlugin != nil {
 		// Fallback command rows are still part of the same plugin query surface.

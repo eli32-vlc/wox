@@ -583,6 +583,11 @@ func (a *APIImpl) PushResults(ctx context.Context, query Query, results []QueryR
 		a.Log(ctx, LogLevelWarning, "PushResults ignored: session id is empty")
 		return false
 	}
+
+	if IsAIOnlyMode() && a.pluginInstance.Metadata.Id != "a9cfd85a-6e53-415c-9d44-68777aa6323d" {
+		a.Log(ctx, LogLevelInfo, "ai-only mode: discarding pushed results from non-chat plugin")
+		return false
+	}
 	if util.GetContextSessionId(ctx) == "" {
 		ctx = util.WithQueryIdContext(util.WithSessionContext(ctx, query.SessionId), query.Id)
 	}

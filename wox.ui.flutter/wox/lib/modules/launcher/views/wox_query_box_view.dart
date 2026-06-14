@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:extended_text_field/extended_text_field.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:uuid/v4.dart';
@@ -29,26 +28,6 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
 
   bool _isSubmitKey(LogicalKeyboardKey key) {
     return key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter;
-  }
-
-  /// Returns true if the cursor is on the first line of a multi-line text field.
-  /// When true, ArrowUp can navigate to history; otherwise it moves cursor up.
-  bool _isCursorOnFirstLine(WoxLauncherController ctrl) {
-    final text = ctrl.queryBoxTextFieldController.text;
-    final offset = ctrl.queryBoxTextFieldController.selection.baseOffset;
-    if (offset <= 0) return true;
-    // If there's no newline before the cursor, we're on the first line
-    return text.lastIndexOf('\n', offset - 1) == -1;
-  }
-
-  /// Returns true if the cursor is on the last line of a multi-line text field.
-  /// When true, ArrowDown can navigate to results; otherwise it moves cursor down.
-  bool _isCursorOnLastLine(WoxLauncherController ctrl) {
-    final text = ctrl.queryBoxTextFieldController.text;
-    final offset = ctrl.queryBoxTextFieldController.selection.baseOffset;
-    if (offset < 0) return true;
-    // If there's no newline after the cursor, we're on the last line
-    return text.indexOf('\n', offset) == -1;
   }
 
   // Helper method to convert LogicalKeyboardKey to number for quick select
@@ -268,9 +247,8 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
         cursorColor: safeFromCssColor(currentTheme.queryBoxCursorColor),
         focusNode: controller.queryBoxFocusNode,
         controller: controller.queryBoxTextFieldController,
-        scrollController: controller.queryBoxScrollController,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
+        keyboardType: TextInputType.text,
+        textInputAction: TextInputAction.done,
         minLines: 1,
         maxLines: QUERY_BOX_MAX_LINES,
         enableIMEPersonalizedLearning: true,
@@ -429,11 +407,6 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                           return KeyEventResult.ignored;
                         }
 
-                        // Let Shift+Enter insert a newline in multi-line mode
-                        if (HardwareKeyboard.instance.isShiftPressed) {
-                          break;
-                        }
-
                         if (Platform.isLinux) {
                           controller.markLinuxQueryBoxSubmitKeyHandled();
                         }
@@ -441,19 +414,11 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                         controller.executeDefaultAction(const UuidV4().generate());
                         return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowDown:
-                        // In multi-line mode, let cursor move to next line if not at end
-                        if (_isCursorOnLastLine(controller)) {
-                          controller.handleQueryBoxArrowDown();
-                          return KeyEventResult.handled;
-                        }
-                        break;
+                        controller.handleQueryBoxArrowDown();
+                        return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowUp:
-                        // In multi-line mode, let cursor move to previous line if not at start
-                        if (_isCursorOnFirstLine(controller)) {
-                          controller.handleQueryBoxArrowUp();
-                          return KeyEventResult.handled;
-                        }
-                        break;
+                        controller.handleQueryBoxArrowUp();
+                        return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowLeft:
                         // Always pass through for natural text navigation
                         break;
@@ -491,17 +456,11 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                         }
                         return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowDown:
-                        if (_isCursorOnLastLine(controller)) {
-                          controller.handleQueryBoxArrowDown();
-                          return KeyEventResult.handled;
-                        }
-                        break;
+                        controller.handleQueryBoxArrowDown();
+                        return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowUp:
-                        if (_isCursorOnFirstLine(controller)) {
-                          controller.handleQueryBoxArrowUp();
-                          return KeyEventResult.handled;
-                        }
-                        break;
+                        controller.handleQueryBoxArrowUp();
+                        return KeyEventResult.handled;
                       case LogicalKeyboardKey.arrowLeft:
                         break;
                       case LogicalKeyboardKey.arrowRight:
@@ -573,12 +532,6 @@ class WoxQueryBoxView extends GetView<WoxLauncherController> {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final rightAccessoryWidth = _getQueryBoxRightAccessoryWidth(context, currentTheme);
-                    // The query box height now follows visual wrapping, so update the controller with the
-                    // same text width used by the input decoration. This keeps pasted multi-line text intact
-                    // while giving long single-line queries enough vertical room for caret navigation.
-                    SchedulerBinding.instance.addPostFrameCallback((_) {
-                      controller.updateQueryBoxTextWrapWidth(const UuidV4().generate(), (constraints.maxWidth - 8 - rightAccessoryWidth).clamp(0, double.infinity));
-                    });
 
                     return Theme(
                       data: ThemeData(textSelectionTheme: TextSelectionThemeData(selectionColor: safeFromCssColor(currentTheme.queryBoxTextSelectionBackgroundColor))),
