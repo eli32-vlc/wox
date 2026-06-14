@@ -169,7 +169,7 @@ func axGetWindowElementsTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName": {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Finder') — required"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Finder') — required"},
 				"windowIndex": {Type: jsonschema.Integer, Description: "Window index (1 = frontmost window, default 1)"},
 				"maxDepth":    {Type: jsonschema.Integer, Description: "Maximum depth to traverse (default 2, max 5)"},
 			},
@@ -267,11 +267,11 @@ func axGetElementTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":    {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Finder') — required"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Safari', 'Finder') — required"},
 				"description": {Type: jsonschema.String, Description: "Accessibility description of the element to find"},
-				"title":      {Type: jsonschema.String, Description: "Title or name of the element to find"},
-				"role":       {Type: jsonschema.String, Description: "AXRole to filter by (e.g. 'AXButton', 'AXTextField', 'AXStaticText')"},
-				"index":      {Type: jsonschema.Integer, Description: "Element index if multiple match (1-based, default 1)"},
+				"title":       {Type: jsonschema.String, Description: "Title or name of the element to find"},
+				"role":        {Type: jsonschema.String, Description: "AXRole to filter by (e.g. 'AXButton', 'AXTextField', 'AXStaticText')"},
+				"index":       {Type: jsonschema.Integer, Description: "Element index if multiple match (1-based, default 1)"},
 			},
 			Required: []string{"appName"},
 		},
@@ -442,13 +442,13 @@ on dumpTree(el, depth, maxDepth)
 		-- Build a compact summary line
 		set lineStr to indent & shortRole
 		if elTitle is not "" then
-			set lineStr to lineStr & " \"" & elTitle & "\""
+			set lineStr to lineStr & " """ & elTitle & """"
 		end if
 		if elDesc is not "" then
 			set lineStr to lineStr & " [" & elDesc & "]"
 		end if
 		if elValue is not "" and shortRole is "TextField" then
-			set lineStr to lineStr & " = \"" & elValue & "\""
+			set lineStr to lineStr & " = """ & elValue & """"
 		end if
 		set output to output & lineStr & return
 		
@@ -483,10 +483,10 @@ func axClickElementTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":    {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
 				"description": {Type: jsonschema.String, Description: "Accessibility description of the element to click"},
-				"title":      {Type: jsonschema.String, Description: "Title or name of the element to click"},
-				"role":       {Type: jsonschema.String, Description: "AXRole filter (e.g. 'AXButton')"},
+				"title":       {Type: jsonschema.String, Description: "Title or name of the element to click"},
+				"role":        {Type: jsonschema.String, Description: "AXRole filter (e.g. 'AXButton')"},
 			},
 			Required: []string{"appName"},
 		},
@@ -546,10 +546,10 @@ func axSetTextTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":  {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
-				"value":    {Type: jsonschema.String, Description: "Text to set in the field (required)"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
+				"value":       {Type: jsonschema.String, Description: "Text to set in the field (required)"},
 				"description": {Type: jsonschema.String, Description: "Description of the text field element"},
-				"index":    {Type: jsonschema.Integer, Description: "Text field index if multiple (default 1)"},
+				"index":       {Type: jsonschema.Integer, Description: "Text field index if multiple (default 1)"},
 			},
 			Required: []string{"appName", "value"},
 		},
@@ -614,9 +614,9 @@ func axGetTextTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":  {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
 				"description": {Type: jsonschema.String, Description: "Optional description of the element"},
-				"index":    {Type: jsonschema.Integer, Description: "Text field index if multiple (default 1)"},
+				"index":       {Type: jsonschema.Integer, Description: "Text field index if multiple (default 1)"},
 			},
 			Required: []string{"appName"},
 		},
@@ -680,9 +680,9 @@ func axShowMenuTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":    {Type: jsonschema.String, Description: "Application name (e.g. 'Finder') — required"},
+				"appName":     {Type: jsonschema.String, Description: "Application name (e.g. 'Finder') — required"},
 				"description": {Type: jsonschema.String, Description: "Description of the element"},
-				"title":      {Type: jsonschema.String, Description: "Title of the element"},
+				"title":       {Type: jsonschema.String, Description: "Title of the element"},
 			},
 			Required: []string{"appName"},
 		},
@@ -737,9 +737,9 @@ func axScrollTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"appName":  {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
+				"appName":   {Type: jsonschema.String, Description: "Application name (e.g. 'Safari') — required"},
 				"direction": {Type: jsonschema.String, Description: "Scroll direction: 'down', 'up', 'left', 'right' (required)"},
-				"lines":    {Type: jsonschema.Integer, Description: "Number of lines/steps to scroll (default 1)"},
+				"lines":     {Type: jsonschema.Integer, Description: "Number of lines/steps to scroll (default 1)"},
 			},
 			Required: []string{"appName", "direction"},
 		},
@@ -753,17 +753,17 @@ func axScrollTool() common.MCPTool {
 
 			keyCode := 125 // down arrow
 			switch strings.ToLower(direction) {
-	case "up":
-		keyCode = 126
-	case "down":
-		keyCode = 125
-	case "left":
-		keyCode = 123
-	case "right":
-		keyCode = 124
-	}
+			case "up":
+				keyCode = 126
+			case "down":
+				keyCode = 125
+			case "left":
+				keyCode = 123
+			case "right":
+				keyCode = 124
+			}
 
-	script := fmt.Sprintf(`tell application "System Events"
+			script := fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
 		set output to ""
 		try
