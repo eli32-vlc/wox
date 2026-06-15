@@ -121,7 +121,7 @@ tell application "Calendar"
 		set output to "No events found in the specified date range."
 	end if
 	return output
-end tell`, days, calFilter, calFilter)
+end tell`, days, escapeForAppleScript(calFilter), escapeForAppleScript(calFilter))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to list calendar events: %s", err.Error())
@@ -139,12 +139,12 @@ func calendarCreateEventTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"title":       {Type: jsonschema.String, Description: "Event title (required)"},
-				"startDate":   {Type: jsonschema.String, Description: "Start date/time in format like '2025-01-15 14:00' or 'tomorrow at 2pm'"},
-				"endDate":     {Type: jsonschema.String, Description: "End date/time in format like '2025-01-15 15:00'"},
-				"location":    {Type: jsonschema.String, Description: "Optional event location"},
-				"notes":       {Type: jsonschema.String, Description: "Optional event notes/description"},
-				"calendar":    {Type: jsonschema.String, Description: "Calendar name (default: first available calendar)"},
+				"title":        {Type: jsonschema.String, Description: "Event title (required)"},
+				"startDate":    {Type: jsonschema.String, Description: "Start date/time in format like '2025-01-15 14:00' or 'tomorrow at 2pm'"},
+				"endDate":      {Type: jsonschema.String, Description: "End date/time in format like '2025-01-15 15:00'"},
+				"location":     {Type: jsonschema.String, Description: "Optional event location"},
+				"notes":        {Type: jsonschema.String, Description: "Optional event notes/description"},
+				"calendar":     {Type: jsonschema.String, Description: "Calendar name (default: first available calendar)"},
 				"alarmMinutes": {Type: jsonschema.Integer, Description: "Optional alarm reminder in minutes before the event"},
 			},
 			Required: []string{"title", "startDate", "endDate"},
@@ -169,12 +169,12 @@ func calendarCreateEventTool() common.MCPTool {
 			set targetCal to (first calendar whose title is "%s")
 		end try
 	end if
-	set newEvent to make new event at end of targetCal with properties {summary:"%s", start date:(date "%s"), end date:(date "%s")`, calName, calName, title, startDate, endDate)
+	set newEvent to make new event at end of targetCal with properties {summary:"%s", start date:(date "%s"), end date:(date "%s")`, escapeForAppleScript(calName), escapeForAppleScript(calName), escapeForAppleScript(title), escapeForAppleScript(startDate), escapeForAppleScript(endDate))
 			if location != "" {
-				script += fmt.Sprintf(`, location:"%s"`, location)
+				script += fmt.Sprintf(`, location:"%s"`, escapeForAppleScript(location))
 			}
 			if notes != "" {
-				script += fmt.Sprintf(`, description:"%s"`, notes)
+				script += fmt.Sprintf(`, description:"%s"`, escapeForAppleScript(notes))
 			}
 			script += fmt.Sprintf(`}
 	if %d > 0 then
@@ -222,7 +222,7 @@ func calendarDeleteEventTool() common.MCPTool {
 		end repeat
 	end repeat
 	return "Deleted " & deletedCount & " event(s) with title '" & "%s" & "'"
-end tell`, title, dateStr, title, dateStr, title)
+end tell`, escapeForAppleScript(title), escapeForAppleScript(dateStr), escapeForAppleScript(title), escapeForAppleScript(dateStr), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to delete event: %s", err.Error())
@@ -268,7 +268,7 @@ func remindersListTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"list":     {Type: jsonschema.String, Description: "Optional reminder list name to filter by"},
+				"list":          {Type: jsonschema.String, Description: "Optional reminder list name to filter by"},
 				"showCompleted": {Type: jsonschema.Boolean, Description: "Whether to show completed reminders (default false)"},
 			},
 		},
@@ -311,7 +311,7 @@ func remindersListTool() common.MCPTool {
 		set output to "No reminders found."
 	end if
 	return output
-end tell`, listFilter, listFilter, completedFilter)
+end tell`, escapeForAppleScript(listFilter), escapeForAppleScript(listFilter), completedFilter)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to list reminders: %s", err.Error())
@@ -329,11 +329,11 @@ func remindersCreateTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"title":      {Type: jsonschema.String, Description: "Reminder title (required)"},
-				"notes":      {Type: jsonschema.String, Description: "Optional notes/body for the reminder"},
-				"dueDate":    {Type: jsonschema.String, Description: "Optional due date, e.g. 'tomorrow at 9am'"},
-				"priority":   {Type: jsonschema.Integer, Description: "Optional priority (1=high, 5=medium, 9=low)"},
-				"list":        {Type: jsonschema.String, Description: "Optional list name (default: first available list)"},
+				"title":    {Type: jsonschema.String, Description: "Reminder title (required)"},
+				"notes":    {Type: jsonschema.String, Description: "Optional notes/body for the reminder"},
+				"dueDate":  {Type: jsonschema.String, Description: "Optional due date, e.g. 'tomorrow at 9am'"},
+				"priority": {Type: jsonschema.Integer, Description: "Optional priority (1=high, 5=medium, 9=low)"},
+				"list":     {Type: jsonschema.String, Description: "Optional list name (default: first available list)"},
 			},
 			Required: []string{"title"},
 		},
@@ -354,9 +354,9 @@ func remindersCreateTool() common.MCPTool {
 			set targetList to (first list whose name is "%s")
 		end try
 	end if
-	set newReminder to make new reminder at end of targetList with properties {name:"%s", body:"%s"`, listName, listName, title, notes)
+	set newReminder to make new reminder at end of targetList with properties {name:"%s", body:"%s"`, escapeForAppleScript(listName), escapeForAppleScript(listName), escapeForAppleScript(title), escapeForAppleScript(notes))
 			if dueDate != "" {
-				script += fmt.Sprintf(`, due date:(date "%s")`, dueDate)
+				script += fmt.Sprintf(`, due date:(date "%s")`, escapeForAppleScript(dueDate))
 			}
 			if priority > 0 {
 				script += fmt.Sprintf(`, priority:%d`, priority)
@@ -404,7 +404,7 @@ func remindersCompleteTool() common.MCPTool {
 		end repeat
 	end repeat
 	return "Completed " & completedCount & " reminder(s) with title '" & "%s" & "'"
-end tell`, listName, listName, title, title)
+end tell`, escapeForAppleScript(listName), escapeForAppleScript(listName), escapeForAppleScript(title), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to complete reminder: %s", err.Error())
@@ -445,7 +445,7 @@ func remindersDeleteTool() common.MCPTool {
 		end repeat
 	end repeat
 	return "Deleted " & deletedCount & " reminder(s) with title '" & "%s" & "'"
-end tell`, listName, listName, title, title)
+end tell`, escapeForAppleScript(listName), escapeForAppleScript(listName), escapeForAppleScript(title), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to delete reminder: %s", err.Error())
@@ -465,9 +465,9 @@ func mailListMessagesTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"account": {Type: jsonschema.String, Description: "Optional mail account name to filter by"},
-				"mailbox": {Type: jsonschema.String, Description: "Optional mailbox name (default: 'INBOX')"},
-				"limit":   {Type: jsonschema.Integer, Description: "Maximum number of messages to return (default 10)"},
+				"account":    {Type: jsonschema.String, Description: "Optional mail account name to filter by"},
+				"mailbox":    {Type: jsonschema.String, Description: "Optional mailbox name (default: 'INBOX')"},
+				"limit":      {Type: jsonschema.Integer, Description: "Maximum number of messages to return (default 10)"},
 				"unreadOnly": {Type: jsonschema.Boolean, Description: "Only show unread messages (default false)"},
 			},
 		},
@@ -523,7 +523,7 @@ func mailListMessagesTool() common.MCPTool {
 		set output to "No messages found."
 	end if
 	return output
-end tell`, account, account, mailbox, limit, limit, limit, boolToScript(unreadOnly))
+end tell`, escapeForAppleScript(account), escapeForAppleScript(account), escapeForAppleScript(mailbox), limit, limit, limit, boolToScript(unreadOnly))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to list mail messages: %s", err.Error())
@@ -573,7 +573,7 @@ func mailReadMessageTool() common.MCPTool {
 		set output to "No matching messages found."
 	end if
 	return output
-end tell`, subject, sender)
+end tell`, escapeForAppleScript(subject), escapeForAppleScript(sender))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to read mail message: %s", err.Error())
@@ -609,20 +609,20 @@ func mailSendTool() common.MCPTool {
 			script := fmt.Sprintf(`tell application "Mail"
 	set newMessage to make new outgoing message with properties {subject:"%s", content:"%s", visible:true}
 	tell newMessage
-		make new to recipient at end of to recipients with properties {address:"%s"}`, subject, body, to)
+		make new to recipient at end of to recipients with properties {address:"%s"}`, escapeForAppleScript(subject), escapeForAppleScript(body), escapeForAppleScript(to))
 			if cc != "" {
 				script += fmt.Sprintf(`
-		make new cc recipient at end of cc recipients with properties {address:"%s"}`, cc)
+		make new cc recipient at end of cc recipients with properties {address:"%s"}`, escapeForAppleScript(cc))
 			}
 			if bcc != "" {
 				script += fmt.Sprintf(`
-		make new bcc recipient at end of bcc recipients with properties {address:"%s"}`, bcc)
+		make new bcc recipient at end of bcc recipients with properties {address:"%s"}`, escapeForAppleScript(bcc))
 			}
 			script += fmt.Sprintf(`
 	end tell
 	send newMessage
 	return "Email sent to " & "%s" & " with subject: " & "%s"
-end tell`, to, subject)
+end tell`, escapeForAppleScript(to), escapeForAppleScript(subject))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to send email: %s", err.Error())
@@ -673,7 +673,7 @@ func mailSearchTool() common.MCPTool {
 		set output to "No messages found for '" & "%s" & "'"
 	end if
 	return output
-end tell`, keyword, keyword, limit, keyword)
+end tell`, escapeForAppleScript(keyword), escapeForAppleScript(keyword), limit, escapeForAppleScript(keyword))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to search mail: %s", err.Error())
@@ -755,7 +755,7 @@ func notesListTool() common.MCPTool {
 		set output to "No notes found."
 	end if
 	return output
-end tell`, folder, folder, limit)
+end tell`, escapeForAppleScript(folder), escapeForAppleScript(folder), limit)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to list notes: %s", err.Error())
@@ -795,7 +795,7 @@ func notesReadTool() common.MCPTool {
 		set output to "No note found with title '" & "%s" & "'"
 	end if
 	return output
-end tell`, title, title)
+end tell`, escapeForAppleScript(title), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to read note: %s", err.Error())
@@ -833,7 +833,7 @@ func notesCreateTool() common.MCPTool {
 	end if
 	make new note at targetFolder with properties {name:"%s", body:"%s"}
 	return "Created note: " & "%s" & " in folder " & name of targetFolder
-end tell`, folder, folder, title, body, title)
+end tell`, escapeForAppleScript(folder), escapeForAppleScript(folder), escapeForAppleScript(title), escapeForAppleScript(body), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to create note: %s", err.Error())
@@ -868,7 +868,7 @@ func notesDeleteTool() common.MCPTool {
 		end repeat
 	end repeat
 	return "Deleted " & deletedCount & " note(s) with title '" & "%s" & "'"
-end tell`, title, title)
+end tell`, escapeForAppleScript(title), escapeForAppleScript(title))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to delete note: %s", err.Error())
@@ -920,7 +920,7 @@ func contactsSearchTool() common.MCPTool {
 		set output to "No contacts found for '" & "%s" & "'"
 	end if
 	return output
-end tell`, query, limit, query)
+end tell`, escapeForAppleScript(query), limit, escapeForAppleScript(query))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to search contacts: %s", err.Error())
@@ -967,7 +967,7 @@ func contactsGetTool() common.MCPTool {
 		set output to "No contact found with name '" & "%s" & "'"
 	end if
 	return output
-end tell`, name, name)
+end tell`, escapeForAppleScript(name), escapeForAppleScript(name))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get contact: %s", err.Error())
@@ -1029,7 +1029,7 @@ func messagesSendTool() common.MCPTool {
 	set targetBuddy to participant "%s" of targetService
 	send "%s" to targetBuddy
 	return "Message sent to " & "%s"
-end tell`, recipient, message, recipient)
+end tell`, escapeForAppleScript(recipient), escapeForAppleScript(message), escapeForAppleScript(recipient))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to send message: %s", err.Error())
@@ -1122,7 +1122,7 @@ func mapsSearchTool() common.MCPTool {
 		set output to "Search completed. View results in Maps app."
 	end if
 	return output
-end tell`, query)
+end tell`, escapeForAppleScript(query))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to search maps: %s", err.Error())
@@ -1158,7 +1158,7 @@ func mapsGetDirectionsTool() common.MCPTool {
 		set output to "Failed to get directions: " & errMsg
 	end try
 	return output
-end tell`, from, to, from, to)
+end tell`, escapeForAppleScript(from), escapeForAppleScript(to), escapeForAppleScript(from), escapeForAppleScript(to))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get directions: %s", err.Error())
@@ -1425,7 +1425,7 @@ func safariOpenURLTool() common.MCPTool {
 	open location "%s"
 	activate
 	return "Opened URL in Safari: " & "%s"
-end tell`, url, url)
+end tell`, escapeForAppleScript(url), escapeForAppleScript(url))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to open URL in Safari: %s", err.Error())
@@ -1439,6 +1439,8 @@ end tell`, url, url)
 // --- Helpers ---
 
 // runAppleScript executes an AppleScript via osascript and returns stdout.
+// On failure the error includes the (truncated) script so the model can
+// diagnose which interpolated argument produced a malformed script.
 func runAppleScript(script string) (string, error) {
 	cmd := exec.Command("osascript", "-e", script)
 	out, err := cmd.Output()
@@ -1448,9 +1450,9 @@ func runAppleScript(script string) (string, error) {
 			if errMsg == "" {
 				errMsg = err.Error()
 			}
-			return "", fmt.Errorf("osascript failed: %s", errMsg)
+			return "", fmt.Errorf("osascript failed: %s | script=%s", errMsg, truncateAppleScriptForError(script))
 		}
-		return "", fmt.Errorf("osascript failed: %s", err.Error())
+		return "", fmt.Errorf("osascript failed: %s | script=%s", err.Error(), truncateAppleScriptForError(script))
 	}
 	if len(out) == 0 {
 		return "", nil
@@ -1463,6 +1465,18 @@ func runAppleScript(script string) (string, error) {
 		}
 	}
 	return sb.String(), nil
+}
+
+// truncateAppleScriptForError returns a single-line preview of the script
+// for inclusion in the tool error message. Newlines and runs of whitespace
+// are collapsed so the model sees a compact diagnostic.
+func truncateAppleScriptForError(script string) string {
+	const maxLen = 400
+	collapsed := strings.Join(strings.Fields(script), " ")
+	if len(collapsed) > maxLen {
+		collapsed = collapsed[:maxLen] + "..."
+	}
+	return collapsed
 }
 
 // boolToScript converts a Go bool to an AppleScript-compatible string.

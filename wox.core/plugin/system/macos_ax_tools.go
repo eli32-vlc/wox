@@ -75,7 +75,7 @@ func axLaunchAppTool() common.MCPTool {
 			script := fmt.Sprintf(`tell application "%s"
 	activate
 	return "Launched " & "%s"
-end tell`, appName, appName)
+end tell`, escapeForAppleScript(appName), escapeForAppleScript(appName))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to launch app '%s': %s", appName, err.Error())
@@ -104,7 +104,7 @@ func axFocusAppTool() common.MCPTool {
 		set frontmost to true
 	end tell
 	return "Focused " & "%s"
-end tell`, appName, appName)
+end tell`, escapeForAppleScript(appName), escapeForAppleScript(appName))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to focus app '%s': %s", appName, err.Error())
@@ -248,7 +248,7 @@ on listElements(el, depth, maxDepth)
 		-- skip elements that can't be inspected
 	end try
 	return output
-end listElements`, appName, windowIdx, maxDepth)
+end listElements`, escapeForAppleScript(appName), windowIdx, maxDepth)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get window elements for '%s': %s", appName, err.Error())
@@ -287,13 +287,13 @@ func axGetElementTool() common.MCPTool {
 			// Build a filter clause to find the element
 			var filters []string
 			if desc != "" {
-				filters = append(filters, fmt.Sprintf(`description is "%s"`, desc))
+				filters = append(filters, fmt.Sprintf(`description is "%s"`, escapeForAppleScript(desc)))
 			}
 			if title != "" {
-				filters = append(filters, fmt.Sprintf(`title is "%s"`, title))
+				filters = append(filters, fmt.Sprintf(`title is "%s"`, escapeForAppleScript(title)))
 			}
 			if role != "" {
-				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, role))
+				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, escapeForAppleScript(role)))
 			}
 
 			filterClause := ""
@@ -355,7 +355,7 @@ func axGetElementTool() common.MCPTool {
 		end try
 		return output
 	end tell
-end tell`, appName, filterClause, index, index)
+end tell`, escapeForAppleScript(appName), filterClause, index, index)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get element in '%s': %s", appName, err.Error())
@@ -462,7 +462,7 @@ on dumpTree(el, depth, maxDepth)
 		-- skip
 	end try
 	return output
-end dumpTree`, appName, windowIdx, maxDepth)
+end dumpTree`, escapeForAppleScript(appName), windowIdx, maxDepth)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get element tree for '%s': %s", appName, err.Error())
@@ -497,14 +497,14 @@ func axClickElementTool() common.MCPTool {
 
 			var filters []string
 			if desc != "" {
-				filters = append(filters, fmt.Sprintf(`description is "%s"`, desc))
+				filters = append(filters, fmt.Sprintf(`description is "%s"`, escapeForAppleScript(desc)))
 			}
 			if title != "" {
-				filters = append(filters, fmt.Sprintf(`title is "%s"`, title))
+				filters = append(filters, fmt.Sprintf(`title is "%s"`, escapeForAppleScript(title)))
 			}
 			if role != "" {
 				shortRole := strings.TrimPrefix(role, "AX")
-				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, "AX"+shortRole))
+				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, escapeForAppleScript("AX"+shortRole)))
 			}
 
 			filterClause := ""
@@ -527,7 +527,7 @@ func axClickElementTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, filterClause)
+end tell`, escapeForAppleScript(appName), filterClause)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to click element in '%s': %s", appName, err.Error())
@@ -577,7 +577,7 @@ func axSetTextTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, desc, index, index, newValue, newValue)
+end tell`, escapeForAppleScript(appName), escapeForAppleScript(desc), index, index, escapeForAppleScript(newValue), escapeForAppleScript(newValue))
 			} else {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
@@ -593,7 +593,7 @@ end tell`, appName, desc, index, index, newValue, newValue)
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, index, index, newValue, index, newValue)
+end tell`, escapeForAppleScript(appName), index, index, escapeForAppleScript(newValue), index, escapeForAppleScript(newValue))
 			}
 
 			out, err := runAppleScript(script)
@@ -643,7 +643,7 @@ func axGetTextTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, desc, index, index)
+end tell`, escapeForAppleScript(appName), escapeForAppleScript(desc), index, index)
 			} else {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
@@ -659,7 +659,7 @@ end tell`, appName, desc, index, index)
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, index, index)
+end tell`, escapeForAppleScript(appName), index, index)
 			}
 
 			out, err := runAppleScript(script)
@@ -718,7 +718,7 @@ func axShowMenuTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, appName, filterClause)
+end tell`, escapeForAppleScript(appName), filterClause)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to show menu in '%s': %s", appName, err.Error())
@@ -775,7 +775,7 @@ func axScrollTool() common.MCPTool {
 		end try
 		return output
 	end tell
-end tell`, appName, lines, keyCode, direction, lines)
+end tell`, escapeForAppleScript(appName), lines, keyCode, escapeForAppleScript(direction), lines)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to scroll in '%s': %s", appName, err.Error())

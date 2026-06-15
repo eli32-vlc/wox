@@ -121,7 +121,7 @@ func finderSelectFileTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path, path)
+end tell`, escapeForAppleScript(path), escapeForAppleScript(path))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to select file in Finder: %s", err.Error())
@@ -161,7 +161,7 @@ func finderNewFolderTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, parentPath, folderName)
+end tell`, escapeForAppleScript(parentPath), escapeForAppleScript(folderName))
 			} else {
 				script = fmt.Sprintf(`tell application "Finder"
 	try
@@ -172,7 +172,7 @@ end tell`, parentPath, folderName)
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, folderName)
+end tell`, escapeForAppleScript(folderName))
 			}
 
 			out, err := runAppleScript(script)
@@ -213,7 +213,7 @@ func finderDuplicateTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path, newName)
+end tell`, escapeForAppleScript(path), escapeForAppleScript(newName))
 			} else {
 				script = fmt.Sprintf(`tell application "Finder"
 	try
@@ -224,7 +224,7 @@ end tell`, path, newName)
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path)
+end tell`, escapeForAppleScript(path))
 			}
 
 			out, err := runAppleScript(script)
@@ -263,7 +263,7 @@ func finderCompressTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path)
+end tell`, escapeForAppleScript(path))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to compress file: %s", err.Error())
@@ -315,7 +315,7 @@ func finderGetInfoTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path)
+end tell`, escapeForAppleScript(path))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to get file info: %s", err.Error())
@@ -362,7 +362,7 @@ func finderTagTool() common.MCPTool {
 	on error errMsg
 		return "Error: " & errMsg
 	end try
-end tell`, path, label, labelName)
+end tell`, escapeForAppleScript(path), label, escapeForAppleScript(labelName))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to tag file: %s", err.Error())

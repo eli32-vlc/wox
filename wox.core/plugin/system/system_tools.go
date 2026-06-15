@@ -819,7 +819,7 @@ func systemQuitApp() common.MCPTool {
 			if name == "" {
 				return common.Conversation{}, fmt.Errorf("name is required")
 			}
-			err := exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to quit`, name)).Run()
+			err := exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to quit`, escapeForAppleScript(name))).Run()
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to quit %s: %s", name, err.Error())
 			}
@@ -845,7 +845,7 @@ func systemForceQuitApp() common.MCPTool {
 			if name == "" {
 				return common.Conversation{}, fmt.Errorf("name is required")
 			}
-			err := exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to quit saving no`, name)).Run()
+			err := exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to quit saving no`, escapeForAppleScript(name))).Run()
 			if err != nil {
 				// Try via kill
 				if pidStr, pidErr := runCmd("pgrep", "-x", name); pidErr == nil {
@@ -934,7 +934,7 @@ func systemSendNotification() common.MCPTool {
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
 			title, _ := args["title"].(string)
 			message, _ := args["message"].(string)
-			script := fmt.Sprintf(`display notification "%s" with title "%s"`, message, title)
+			script := fmt.Sprintf(`display notification "%s" with title "%s"`, escapeForAppleScript(message), escapeForAppleScript(title))
 			exec.Command("osascript", "-e", script).Run()
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: "Notification sent"}, nil
 		},

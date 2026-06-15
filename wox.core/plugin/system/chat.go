@@ -574,9 +574,9 @@ Always use tools to gather real data — never fabricate system information.`
 			}
 
 			defaultPrompt := common.Conversation{
-				Id:   uuid.NewString(),
-				Role: common.ConversationRoleSystem,
-				Text: defaultPromptText,
+				Id:        uuid.NewString(),
+				Role:      common.ConversationRoleSystem,
+				Text:      defaultPromptText,
 				Timestamp: util.GetSystemTimestamp(),
 			}
 			aiChatData.Conversations = append([]common.Conversation{defaultPrompt}, aiChatData.Conversations...)

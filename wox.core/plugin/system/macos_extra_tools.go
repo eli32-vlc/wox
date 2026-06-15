@@ -106,7 +106,7 @@ func screenshotCaptureWindowTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"outputPath": {Type: jsonschema.String, Description: "Optional full path for the screenshot file"},
+				"outputPath":   {Type: jsonschema.String, Description: "Optional full path for the screenshot file"},
 				"captureMouse": {Type: jsonschema.Boolean, Description: "Whether to include the mouse cursor (default false)"},
 			},
 		},
@@ -153,10 +153,10 @@ func notificationPostTool() common.MCPTool {
 
 			soundPart := ""
 			if sound != "" {
-				soundPart = fmt.Sprintf(` sound name "%s"`, sound)
+				soundPart = fmt.Sprintf(` sound name "%s"`, escapeForAppleScript(sound))
 			}
 
-			script := fmt.Sprintf(`display notification "%s" with title "%s"%s`, message, title, soundPart)
+			script := fmt.Sprintf(`display notification "%s" with title "%s"%s`, escapeForAppleScript(message), escapeForAppleScript(title), soundPart)
 			err := exec.Command("osascript", "-e", script).Run()
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to post notification: %s", err.Error())
@@ -186,7 +186,7 @@ func terminalRunCommandTool() common.MCPTool {
 	set newTab to do script "%s"
 	set output to "Command running in Terminal: " & "%s"
 	return output
-end tell`, command, command)
+end tell`, escapeForAppleScript(command), escapeForAppleScript(command))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to run command in Terminal: %s", err.Error())
@@ -211,11 +211,11 @@ func dictionaryLookupTool() common.MCPTool {
 		Callback: func(ctx context.Context, args map[string]any) (common.Conversation, error) {
 			word, _ := args["word"].(string)
 
-		script := fmt.Sprintf(`tell application "Dictionary"
+			script := fmt.Sprintf(`tell application "Dictionary"
 	activate
 	search for "%s"
 	return "Dictionary opened for: " & "%s"
-end tell`, word, word)
+end tell`, escapeForAppleScript(word), escapeForAppleScript(word))
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{}, fmt.Errorf("failed to look up word: %s", err.Error())
@@ -233,7 +233,7 @@ func installedAppsTool() common.MCPTool {
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"limit": {Type: jsonschema.Integer, Description: "Maximum number of apps to list (default 50)"},
+				"limit":  {Type: jsonschema.Integer, Description: "Maximum number of apps to list (default 50)"},
 				"search": {Type: jsonschema.String, Description: "Optional search term to filter app names"},
 			},
 		},
@@ -246,7 +246,7 @@ func installedAppsTool() common.MCPTool {
 
 			searchFilter := ""
 			if search != "" {
-				searchFilter = fmt.Sprintf(` | grep -i "%s"`, search)
+				searchFilter = fmt.Sprintf(` | grep -i "%s"`, escapeForAppleScript(search))
 			}
 
 			script := fmt.Sprintf(`do shell script "mdfind 'kMDItemContentType == \"com.apple.application-bundle\"' | head -%d%s"`, limit, searchFilter)
@@ -309,7 +309,7 @@ func icloudDriveListTool() common.MCPTool {
 				limit = int(l)
 			}
 
-			icloudPath := fmt.Sprintf("~/Library/Mobile Documents/com~apple~CloudDocs/%s", subpath)
+			icloudPath := fmt.Sprintf("~/Library/Mobile Documents/com~apple~CloudDocs/%s", escapeForAppleScript(subpath))
 			script := fmt.Sprintf(`do shell script "ls -la \"%s\" | tail -n +2 | head -%d"`, icloudPath, limit)
 			out, err := runAppleScript(script)
 			if err != nil {
@@ -346,13 +346,13 @@ func facetimeCallTool() common.MCPTool {
 	activate
 	start call "%s"
 	return "FaceTime video call initiated to: " & "%s"
-end tell`, target, target)
+end tell`, escapeForAppleScript(target), escapeForAppleScript(target))
 			} else {
 				script = fmt.Sprintf(`tell application "FaceTime"
 	activate
 	start call "%s" with audio only
 	return "FaceTime audio call initiated to: " & "%s"
-end tell`, target, target)
+end tell`, escapeForAppleScript(target), escapeForAppleScript(target))
 			}
 
 			out, err := runAppleScript(script)
@@ -414,11 +414,11 @@ func systemSettingsOpenTool() common.MCPTool {
 	activate
 	reveal pane id "%s"
 	return "Opened System Settings: " & "%s"
-end tell`, pane, pane)
+end tell`, escapeForAppleScript(pane), escapeForAppleScript(pane))
 			out, err := runAppleScript(script)
 			if err != nil {
 				// Fallback: try opening via URL scheme
-				_ = exec.Command("open", fmt.Sprintf("x-apple.systempreferences:%s", pane)).Run()
+				_ = exec.Command("open", fmt.Sprintf("x-apple.systempreferences:%s", escapeForAppleScript(pane))).Run()
 				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("Attempted to open System Settings pane: %s", pane)}, nil
 			}
 			return common.Conversation{Role: common.ConversationRoleAssistant, Text: strings.TrimSpace(out)}, nil
