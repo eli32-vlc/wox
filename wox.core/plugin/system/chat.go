@@ -643,8 +643,9 @@ Always use tools to gather real data — never fabricate system information.`
 				r.summaryTitleIfNecessary(ctx, aiChatData)
 			}
 
-			if streamResult.IsAllToolCallsSucceeded() {
-				// recursively call the chat to continue
+			if streamResult.IsAllToolCallsCompleted() {
+				// recursively call the chat to continue so the model can react
+				// to tool results (including failures) in the next turn
 				r.api.Log(ctx, plugin.LogLevelInfo, fmt.Sprintf("AI: recursively calling the chat to continue, loop: %d", chatLoopCount+1))
 				r.chatCancelFuncs.Delete(aiChatData.Id)
 				r.Chat(ctx, aiChatData, chatLoopCount+1)

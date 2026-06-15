@@ -228,13 +228,13 @@ on listElements(el, depth, maxDepth)
 		
 		set elSummary to indent & "[" & elRole & "]"
 		if elTitle is not "" then
-			set elSummary to elSummary & " title=""" & elTitle & """"
+			set elSummary to elSummary & " title=" & quote & elTitle & quote
 		end if
 		if elName is not "" then
-			set elSummary to elSummary & " name=""" & elName & """"
+			set elSummary to elSummary & " name=" & quote & elName & quote
 		end if
 		if elDesc is not "" then
-			set elSummary to elSummary & " desc=""" & elDesc & """"
+			set elSummary to elSummary & " desc=" & quote & elDesc & quote
 		end if
 		set output to output & elSummary & return
 		
@@ -441,13 +441,13 @@ on dumpTree(el, depth, maxDepth)
 		-- Build a compact summary line
 		set lineStr to indent & shortRole
 		if elTitle is not "" then
-			set lineStr to lineStr & " """ & elTitle & """"
+			set lineStr to lineStr & " " & quote & elTitle & quote
 		end if
 		if elDesc is not "" then
 			set lineStr to lineStr & " [" & elDesc & "]"
 		end if
 		if elValue is not "" and shortRole is "TextField" then
-			set lineStr to lineStr & " = """ & elValue & """"
+			set lineStr to lineStr & " = " & quote & elValue & quote
 		end if
 		set output to output & lineStr & return
 		

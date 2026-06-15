@@ -64,7 +64,7 @@ func (c *ChatStreamData) IsNotFinished() bool {
 	return c.Status == ChatStreamStatusStreaming || c.Status == ChatStreamStatusStreamed || c.Status == ChatStreamStatusRunningToolCall
 }
 
-func (c *ChatStreamData) IsAllToolCallsSucceeded() bool {
+func (c *ChatStreamData) IsAllToolCallsCompleted() bool {
 	if c.Status != ChatStreamStatusFinished {
 		return false
 	}
@@ -73,7 +73,10 @@ func (c *ChatStreamData) IsAllToolCallsSucceeded() bool {
 	}
 
 	for _, toolCall := range c.ToolCalls {
-		if toolCall.Status != ToolCallStatusSucceeded {
+		// A tool call is considered "completed" when it has reached a terminal
+		// state (succeeded or failed). Pending/running/streaming tool calls
+		// are still in flight and the model has not yet seen their result.
+		if toolCall.Status != ToolCallStatusSucceeded && toolCall.Status != ToolCallStatusFailed {
 			return false
 		}
 	}

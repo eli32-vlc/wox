@@ -11,8 +11,6 @@ import (
 	"wox/setting/definition"
 	"wox/util"
 	"wox/util/clipboard"
-
-	"github.com/samber/lo"
 )
 
 type LogLevel = string
@@ -487,9 +485,11 @@ func (a *APIImpl) AIChatStream(ctx context.Context, model common.Model, conversa
 					for toolCallIndex, toolCall := range streamResult.ToolCalls {
 						util.GetLogger().Info(ctx, fmt.Sprintf("AI: Tool call is pending to execute, name: %s, args: %v", toolCall.Name, toolCall.Arguments))
 
+						sw.Add(1)
+						toolFound := false
 						for _, tool := range options.Tools {
 							if tool.Name == toolCall.Name {
-								sw.Add(1)
+								toolFound = true
 
 								util.GetLogger().Info(ctx, fmt.Sprintf("AI: Executing tool: %s with args: %v, toolcall id: %s, toolcall status: %s", tool.Name, toolCall.Arguments, toolCall.Id, toolCall.Status))
 
@@ -521,28 +521,37 @@ func (a *APIImpl) AIChatStream(ctx context.Context, model common.Model, conversa
 								})
 							}
 						}
+
+						if !toolFound {
+							// Model asked for a tool that is not registered. Mark it as failed
+							// so the model sees the error in the next turn and can adapt
+							// (e.g. pick a different tool) instead of stalling silently.
+							util.GetLogger().Error(ctx, fmt.Sprintf("AI: tool not found: %s, toolcall id: %s", toolCall.Name, toolCall.Id))
+							streamResult.Status = common.ChatStreamStatusRunningToolCall
+							streamResult.ToolCalls[toolCallIndex].Status = common.ToolCallStatusFailed
+							streamResult.ToolCalls[toolCallIndex].Response = fmt.Sprintf("tool %q not found", toolCall.Name)
+							streamResult.ToolCalls[toolCallIndex].EndTimestamp = util.GetSystemTimestamp()
+							callback(streamResult)
+							sw.Done()
+						}
 					}
 
-				sw.Wait()
+					sw.Wait()
 
-				if ctx.Err() != nil {
-					util.GetLogger().Info(ctx, "AI: tool execution interrupted by context cancellation")
-					streamResult.Status = common.ChatStreamStatusError
-					streamResult.Data = ctx.Err().Error()
-					callback(streamResult)
-					return
-				}
+					if ctx.Err() != nil {
+						util.GetLogger().Info(ctx, "AI: tool execution interrupted by context cancellation")
+						streamResult.Status = common.ChatStreamStatusError
+						streamResult.Data = ctx.Err().Error()
+						callback(streamResult)
+						return
+					}
 
-				anyToolCallFailed := lo.SomeBy(streamResult.ToolCalls, func(toolCall common.ToolCallInfo) bool {
-					return toolCall.Status == common.ToolCallStatusFailed
-				})
-				if anyToolCallFailed {
-					streamResult.Status = common.ChatStreamStatusError
-					callback(streamResult)
-				} else {
+					// Always finish the stream once all tool calls have completed (success or
+					// failure). The per-call Status field still carries the verdict, and the
+					// failed tool result is already in the conversation as a role:tool message,
+					// so the model can react to the failure in the next turn.
 					streamResult.Status = common.ChatStreamStatusFinished
 					callback(streamResult)
-				}
 					return
 				}
 			}
