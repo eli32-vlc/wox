@@ -507,11 +507,12 @@ func mailListMessagesTool() common.MCPTool {
 			if %d > 0 and (count allMessages) > %d then
 				set allMessages to items 1 through %d of allMessages
 			end if
-			repeat with msg in allMessages					if %s then
-						if read status of msg is true then
-							next repeat
-						end if
+			repeat with msg in allMessages
+				if %s then
+					if read status of msg is true then
+						next repeat
 					end if
+				end if
 				set output to output & "From: " & sender of msg & return
 				set output to output & "Subject: " & subject of msg & return
 				set output to output & "Date: " & (date received of msg as text) & return

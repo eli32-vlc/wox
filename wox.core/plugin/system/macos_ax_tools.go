@@ -127,14 +127,15 @@ func axGetFocusedElementTool() common.MCPTool {
 	set frontApp to name of first process whose frontmost is true
 	tell process frontApp
 		set focusedEl to focused of window 1
-		if focusedEl is not missing value then					set elRole to ""
-					try
-						set elRole to (value of attribute "AXRole" of focusedEl) as text
-					end try
-					set elDesc to ""
-					try
-						set elDesc to description of focusedEl
-					end try
+		if focusedEl is not missing value then
+			set elRole to ""
+			try
+				set elRole to role of focusedEl as text
+			end try
+			set elDesc to ""
+			try
+				set elDesc to description of focusedEl
+			end try
 			set elValue to ""
 			try
 				set elValue to (value of focusedEl) as text
@@ -208,45 +209,47 @@ on listElements(el, depth, maxDepth)
 		set indent to indent & "  "
 	end repeat
 	set output to ""
-	try
-		set elRole to "unknown"
+	tell application "System Events"
 		try
-			set elRole to (value of attribute "AXRole" of el) as text
+			set elRole to "unknown"
+			try
+				set elRole to role of el as text
+			end try
+			set elDesc to ""
+			try
+				set elDesc to description of el
+			end try
+			set elTitle to ""
+			try
+				set elTitle to title of el
+			end try
+			set elName to ""
+			try
+				set elName to name of el
+			end try
+
+			set elSummary to indent & "[" & elRole & "]"
+			if elTitle is not "" then
+				set elSummary to elSummary & " title=" & quote & elTitle & quote
+			end if
+			if elName is not "" then
+				set elSummary to elSummary & " name=" & quote & elName & quote
+			end if
+			if elDesc is not "" then
+				set elSummary to elSummary & " desc=" & quote & elDesc & quote
+			end if
+			set output to output & elSummary & return
+
+			try
+				set children to every UI element of el
+				repeat with ch in children
+					set output to output & my listElements(ch, depth + 1, maxDepth)
+				end repeat
+			end try
+		on error
+			-- skip elements that can't be inspected
 		end try
-		set elDesc to ""
-		try
-			set elDesc to description of el
-		end try
-		set elTitle to ""
-		try
-			set elTitle to title of el
-		end try
-		set elName to ""
-		try
-			set elName to name of el
-		end try
-		
-		set elSummary to indent & "[" & elRole & "]"
-		if elTitle is not "" then
-			set elSummary to elSummary & " title=" & quote & elTitle & quote
-		end if
-		if elName is not "" then
-			set elSummary to elSummary & " name=" & quote & elName & quote
-		end if
-		if elDesc is not "" then
-			set elSummary to elSummary & " desc=" & quote & elDesc & quote
-		end if
-		set output to output & elSummary & return
-		
-		try
-			set children to every UI element of el
-			repeat with child in children
-				set output to output & my listElements(child, depth + 1, maxDepth)
-			end repeat
-		end try
-	on error
-		-- skip elements that can't be inspected
-	end try
+	end tell
 	return output
 end listElements`, escapeForAppleScript(appName), windowIdx, maxDepth)
 			out, err := runAppleScript(script)
@@ -284,16 +287,19 @@ func axGetElementTool() common.MCPTool {
 				index = int(i)
 			}
 
-			// Build a filter clause to find the element
+			// Build a filter clause to find the element. Filter values use
+			// appleScriptStringLiteral (not escapeForAppleScript) because
+			// `whose` filter clauses reject the doubled-quote escape
+			// `""` that a regular string literal would accept.
 			var filters []string
 			if desc != "" {
-				filters = append(filters, fmt.Sprintf(`description is "%s"`, escapeForAppleScript(desc)))
+				filters = append(filters, fmt.Sprintf(`description is %s`, appleScriptStringLiteral(desc)))
 			}
 			if title != "" {
-				filters = append(filters, fmt.Sprintf(`title is "%s"`, escapeForAppleScript(title)))
+				filters = append(filters, fmt.Sprintf(`title is %s`, appleScriptStringLiteral(title)))
 			}
 			if role != "" {
-				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, escapeForAppleScript(role)))
+				filters = append(filters, fmt.Sprintf(`role is %s`, appleScriptStringLiteral(role)))
 			}
 
 			filterClause := ""
@@ -310,7 +316,7 @@ func axGetElementTool() common.MCPTool {
 				set el to item %d of matchingElements
 				set elRole to "?"
 				try
-					set elRole to (value of attribute "AXRole" of el) as text
+					set elRole to role of el as text
 				end try
 				set elDesc to ""
 				try
@@ -330,11 +336,19 @@ func axGetElementTool() common.MCPTool {
 				end try
 				set enabledStr to "?"
 				try
-					if enabled of el then set enabledStr to "yes" else set enabledStr to "no"
+					if enabled of el then
+						set enabledStr to "yes"
+					else
+						set enabledStr to "no"
+					end if
 				end try
 				set focusedStr to "?"
 				try
-					if focused of el then set focusedStr to "yes" else set focusedStr to "no"
+					if focused of el then
+						set focusedStr to "yes"
+					else
+						set focusedStr to "no"
+					end if
 				end try
 				set {elX, elY} to position of el
 				set {elW, elH} to size of el
@@ -413,54 +427,56 @@ on dumpTree(el, depth, maxDepth)
 		set indent to indent & "  "
 	end repeat
 	set output to ""
-	try
-		set elRole to "?"
+	tell application "System Events"
 		try
-			set elRole to (value of attribute "AXRole" of el) as text
+			set elRole to "?"
+			try
+				set elRole to role of el as text
+			end try
+			set shortRole to ""
+			if elRole starts with "AX" then
+				set shortRole to text 3 thru -1 of elRole
+			else
+				set shortRole to elRole
+			end if
+
+			set elDesc to ""
+			try
+				set elDesc to description of el
+			end try
+			set elTitle to ""
+			try
+				set elTitle to title of el
+			end try
+			set elValue to ""
+			try
+				set elValue to (value of el) as text
+			end try
+
+			-- Build a compact summary line
+			set lineStr to indent & shortRole
+			if elTitle is not "" then
+				set lineStr to lineStr & " " & quote & elTitle & quote
+			end if
+			if elDesc is not "" then
+				set lineStr to lineStr & " [" & elDesc & "]"
+			end if
+			if elValue is not "" and shortRole is "TextField" then
+				set lineStr to lineStr & " = " & quote & elValue & quote
+			end if
+			set output to output & lineStr & return
+
+			-- Recurse into children
+			try
+				set children to every UI element of el
+				repeat with ch in children
+					set output to output & my dumpTree(ch, depth + 1, maxDepth)
+				end repeat
+			end try
+		on error
+			-- skip
 		end try
-		set shortRole to ""
-		if elRole starts with "AX" then
-			set shortRole to text 3 thru -1 of elRole
-		else
-			set shortRole to elRole
-		end if
-		
-		set elDesc to ""
-		try
-			set elDesc to description of el
-		end try
-		set elTitle to ""
-		try
-			set elTitle to title of el
-		end try
-		set elValue to ""
-		try
-			set elValue to (value of el) as text
-		end try
-		
-		-- Build a compact summary line
-		set lineStr to indent & shortRole
-		if elTitle is not "" then
-			set lineStr to lineStr & " " & quote & elTitle & quote
-		end if
-		if elDesc is not "" then
-			set lineStr to lineStr & " [" & elDesc & "]"
-		end if
-		if elValue is not "" and shortRole is "TextField" then
-			set lineStr to lineStr & " = " & quote & elValue & quote
-		end if
-		set output to output & lineStr & return
-		
-		-- Recurse into children
-		try
-			set children to every UI element of el
-			repeat with child in children
-				set output to output & my dumpTree(child, depth + 1, maxDepth)
-			end repeat
-		end try
-	on error
-		-- skip
-	end try
+	end tell
 	return output
 end dumpTree`, escapeForAppleScript(appName), windowIdx, maxDepth)
 			out, err := runAppleScript(script)
@@ -497,14 +513,14 @@ func axClickElementTool() common.MCPTool {
 
 			var filters []string
 			if desc != "" {
-				filters = append(filters, fmt.Sprintf(`description is "%s"`, escapeForAppleScript(desc)))
+				filters = append(filters, fmt.Sprintf(`description is %s`, appleScriptStringLiteral(desc)))
 			}
 			if title != "" {
-				filters = append(filters, fmt.Sprintf(`title is "%s"`, escapeForAppleScript(title)))
+				filters = append(filters, fmt.Sprintf(`title is %s`, appleScriptStringLiteral(title)))
 			}
 			if role != "" {
 				shortRole := strings.TrimPrefix(role, "AX")
-				filters = append(filters, fmt.Sprintf(`(value of attribute "AXRole") is "%s"`, escapeForAppleScript("AX"+shortRole)))
+				filters = append(filters, fmt.Sprintf(`role is %s`, appleScriptStringLiteral("AX"+shortRole)))
 			}
 
 			filterClause := ""
@@ -566,7 +582,7 @@ func axSetTextTool() common.MCPTool {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
 		try
-			set matchingFields to (every text field of window 1 whose description is "%s")
+			set matchingFields to (every text field of window 1 whose description is %s)
 			if (count of matchingFields) >= %d then
 				set value of item %d of matchingFields to "%s"
 				return "Set text field to: " & "%s"
@@ -577,7 +593,7 @@ func axSetTextTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, escapeForAppleScript(appName), escapeForAppleScript(desc), index, index, escapeForAppleScript(newValue), escapeForAppleScript(newValue))
+end tell`, escapeForAppleScript(appName), appleScriptStringLiteral(desc), index, index, escapeForAppleScript(newValue), escapeForAppleScript(newValue))
 			} else {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
@@ -632,7 +648,7 @@ func axGetTextTool() common.MCPTool {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
 		try
-			set matchingElements to (every UI element of window 1 whose description is "%s" and (value of attribute "AXRole") is "AXTextField")
+			set matchingElements to (every UI element of window 1 whose description is %s and role is "AXTextField")
 			if (count of matchingElements) >= %d then
 				set elValue to (value of item %d of matchingElements) as text
 				return elValue
@@ -643,7 +659,7 @@ func axGetTextTool() common.MCPTool {
 			return "Error: " & errMsg
 		end try
 	end tell
-end tell`, escapeForAppleScript(appName), escapeForAppleScript(desc), index, index)
+end tell`, escapeForAppleScript(appName), appleScriptStringLiteral(desc), index, index)
 			} else {
 				script = fmt.Sprintf(`tell application "System Events"
 	tell process "%s"
@@ -692,10 +708,10 @@ func axShowMenuTool() common.MCPTool {
 
 			var filters []string
 			if desc != "" {
-				filters = append(filters, fmt.Sprintf(`description is "%s"`, desc))
+				filters = append(filters, fmt.Sprintf(`description is %s`, appleScriptStringLiteral(desc)))
 			}
 			if title != "" {
-				filters = append(filters, fmt.Sprintf(`title is "%s"`, title))
+				filters = append(filters, fmt.Sprintf(`title is %s`, appleScriptStringLiteral(title)))
 			}
 
 			filterClause := ""

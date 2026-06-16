@@ -249,7 +249,7 @@ func installedAppsTool() common.MCPTool {
 				searchFilter = fmt.Sprintf(` | grep -i "%s"`, escapeForAppleScript(search))
 			}
 
-			script := fmt.Sprintf(`do shell script "mdfind 'kMDItemContentType == \"com.apple.application-bundle\"' | head -%d%s"`, limit, searchFilter)
+			script := fmt.Sprintf(`do shell script "mdfind 'kMDItemContentType == ""com.apple.application-bundle""' | head -%d%s"`, limit, searchFilter)
 			out, err := runAppleScript(script)
 			if err != nil {
 				// Fall back to simpler listing
@@ -310,7 +310,7 @@ func icloudDriveListTool() common.MCPTool {
 			}
 
 			icloudPath := fmt.Sprintf("~/Library/Mobile Documents/com~apple~CloudDocs/%s", escapeForAppleScript(subpath))
-			script := fmt.Sprintf(`do shell script "ls -la \"%s\" | tail -n +2 | head -%d"`, icloudPath, limit)
+			script := fmt.Sprintf(`do shell script "ls -la ""%s"" | tail -n +2 | head -%d"`, icloudPath, limit)
 			out, err := runAppleScript(script)
 			if err != nil {
 				return common.Conversation{Role: common.ConversationRoleAssistant, Text: fmt.Sprintf("iCloud Drive not accessible or empty at path: %s", icloudPath)}, nil
